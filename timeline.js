@@ -61,7 +61,15 @@ async function getAllEntriesFromIDB(){
     const store = tx.objectStore('entries');
     const req = store.getAll();
     req.onsuccess = ()=>{
-      const arr = req.result || [];
+      let arr = req.result || [];
+      // normalize category defaults and ensure stable tmp keys
+      arr = arr.map(e=>{
+        if(!e.category) e.category = 'c1';
+        if(e.id === undefined || e.id === null){
+          if(!e._tmpKey) e._tmpKey = 'tmp:' + Date.now() + ':' + Math.random();
+        }
+        return e;
+      });
       // sort by ts desc
       arr.sort((a,b)=> b.ts.localeCompare(a.ts));
       resolve(arr);
@@ -283,7 +291,7 @@ function buildEntryElement(e){
   el.className = 'entry';
   // expose id and category for optimistic updates and editing
   if(e.id !== undefined) el.dataset.id = String(e.id);
-  if(e.category) el.dataset.category = e.category;
+  el.dataset.category = e.category || 'c1';
   const key = getEntryKey(e);
   el.dataset.key = key;
   // keep pointer to entry object for selection handlers
@@ -351,7 +359,9 @@ function getEntryKey(e){
   if(e.id !== undefined && e.id !== null){
     return (typeof e.id === 'string' ? 's:' : 'n:') + String(e.id);
   }
-  return 't:' + (e.ts || '') + '::' + (e.text || '');
+  // ensure a stable temporary key on the object
+  if(!e._tmpKey) e._tmpKey = 'tmp:' + Date.now() + ':' + Math.random();
+  return e._tmpKey;
 }
 
 function createSelectionBar(){
@@ -627,7 +637,12 @@ async function listenToUserEntries(uid){
   if(firestoreListenerUnsub) firestoreListenerUnsub();
   const col = window._fb.db.collection('users').doc(uid).collection('entries').orderBy('ts','desc');
   firestoreListenerUnsub = col.onSnapshot(snapshot=>{
-    const docs = snapshot.docs.map(d=>({ id: d.id, ...d.data() }));
+    const docs = snapshot.docs.map(d=>{
+      const data = d.data() || {};
+      // normalize category default
+      if(!data.category) data.category = 'c1';
+      return Object.assign({ id: d.id }, data);
+    });
     // Firestore stores plain text entries (no images in this app)
     renderEntries(docs);
   }, err=>{
