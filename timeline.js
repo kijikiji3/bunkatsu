@@ -154,26 +154,49 @@ async function migrateLocalStorageToIDB(){
 function createColumnDOM(catKey){
   const col = document.createElement('div');
   col.className = 'timeline-column';
+  const headerRow = document.createElement('div');
+  headerRow.className = 'title-row';
+
   const header = document.createElement('h3');
   header.className = 'timeline-title';
   header.dataset.key = catKey;
   header.contentEditable = 'true';
   header.spellcheck = false;
-  header.addEventListener('blur', async (ev)=>{
-    const newTitle = ev.target.textContent.trim() || DEFAULT_TITLES[catKey];
-    ev.target.textContent = newTitle;
-    // save locally and if logged in, push to Firestore
-    const titles = await getCategoryTitlesFromIDB();
-    titles[catKey] = newTitle;
-    await saveCategoryTitlesToIDB(titles);
+
+  // Confirm button to explicitly save title changes
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'title-confirm';
+  confirmBtn.type = 'button';
+  confirmBtn.textContent = '確定';
+  confirmBtn.style.display = 'none';
+
+  // Show confirm when editing begins
+  header.addEventListener('focus', ()=>{ confirmBtn.style.display = ''; });
+  header.addEventListener('input', ()=>{ confirmBtn.style.display = ''; });
+  // Hide confirm shortly after blur (allow click)
+  header.addEventListener('blur', ()=>{ setTimeout(()=>{ if(document.activeElement !== confirmBtn) confirmBtn.style.display = 'none'; }, 200); });
+
+  confirmBtn.addEventListener('click', async ()=>{
+    const newTitle = header.textContent.trim() || DEFAULT_TITLES[catKey];
+    header.textContent = newTitle;
+    // save locally
+    try{
+      const titles = await getCategoryTitlesFromIDB();
+      titles[catKey] = newTitle;
+      await saveCategoryTitlesToIDB(titles);
+    }catch(err){ console.warn('Failed to save category titles to IDB', err); }
+    // save to Firestore (if signed in)
     if(currentUser && window._fb && window._fb.db){
       try{
-        const docRef = window._fb.db.collection('users').doc(currentUser.uid);
-        await docRef.set({ categories: titles }, { merge: true });
-      }catch(err){ console.warn('Failed to sync category titles to Firestore', err); }
+        await window._fb.db.collection('users').doc(currentUser.uid).set({ categories: await getCategoryTitlesFromIDB() }, { merge: true });
+      }catch(err){ console.warn('Failed to sync category titles to Firestore', err); alert('Firebaseへの保存に失敗しました: ' + (err && err.message ? err.message : '')); }
     }
+    confirmBtn.style.display = 'none';
   });
-  col.appendChild(header);
+
+  headerRow.appendChild(header);
+  headerRow.appendChild(confirmBtn);
+  col.appendChild(headerRow);
 
   // per-category input form (textarea + send button)
   const form = document.createElement('form');
