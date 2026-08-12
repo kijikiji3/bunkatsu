@@ -367,7 +367,11 @@ if(window._fb && window._fb.auth){
     if(user){
       // load category titles from server (if present) and save to IDB
       const remoteTitles = await loadCategoryTitlesFromFirestore(user.uid);
-      if(remoteTitles){ await saveCategoryTitlesToIDB(remoteTitles); }
+      if(remoteTitles){
+        await saveCategoryTitlesToIDB(remoteTitles);
+        // Ensure UI updates with remote titles immediately
+        await render();
+      }
       // flush local outbox to Firestore then listen to remote entries
       await flushOutboxToFirestore(user.uid);
       listenToUserEntries(user.uid);
