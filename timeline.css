@@ -58,3 +58,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
   .modal .modal-dialog{width:96%;padding:12px}
 }
 
+/* Trash button in modal */
+.modal .trash-btn{position:absolute;top:8px;right:8px;background:transparent;border:none;color:#e11d48;font-size:20px;line-height:1;padding:6px;border-radius:6px;cursor:pointer}
+.modal .trash-btn:hover{background:rgba(225,29,72,0.06)}
+

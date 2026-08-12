@@ -308,11 +308,11 @@ function createEditModal(){
   modal.innerHTML = `
     <div class="modal-backdrop"></div>
     <div class="modal-dialog" role="dialog" aria-modal="true">
+      <button id="deleteBtn" class="trash-btn" aria-label="削除">🗑️</button>
       <h3>エントリーを編集</h3>
       <textarea id="editText" rows="6" placeholder="テキストを編集..." style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd"></textarea>
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
         <input id="editDatetime" type="datetime-local" style="flex:1;padding:6px;border-radius:6px;border:1px solid #ddd">
-        <button id="calendarBtn" type="button">📅</button>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
         <button id="editCancelBtn" type="button">キャンセル</button>
@@ -325,10 +325,7 @@ function createEditModal(){
   // handlers
   modal.querySelector('.modal-backdrop').addEventListener('click', closeEditModal);
   modal.querySelector('#editCancelBtn').addEventListener('click', closeEditModal);
-  modal.querySelector('#calendarBtn').addEventListener('click', ()=>{
-    const ip = document.getElementById('editDatetime');
-    if(ip) ip.focus();
-  });
+  modal.querySelector('#deleteBtn').addEventListener('click', deleteEntry);
   modal.querySelector('#editSaveBtn').addEventListener('click', saveEditedEntry);
 }
 
@@ -408,6 +405,62 @@ async function saveEditedEntry(){
   }catch(err){
     console.error('Failed to update IDB entry', err);
     alert('ローカル保存に失敗しました。' + (err && err.message ? err.message : ''));
+  }
+}
+
+// Deletion helpers
+async function deleteEntryFromIDB(id){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(['entries','outbox'], 'readwrite');
+    const entries = tx.objectStore('entries');
+    const outbox = tx.objectStore('outbox');
+    try{
+      entries.delete(id);
+    }catch(e){/* ignore */}
+    const req = outbox.openCursor();
+    req.onsuccess = (ev)=>{
+      const cursor = ev.target.result;
+      if(cursor){
+        if(cursor.value && cursor.value.entryId === id) cursor.delete();
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function deleteEntry(){
+  if(!_editingEntry) return;
+  // If firestore doc id (string) and signed in, delete remote doc
+  if(currentUser && window._fb && window._fb.db && typeof _editingEntry.id === 'string'){
+    try{
+      await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').doc(_editingEntry.id).delete();
+      closeEditModal();
+      return;
+    }catch(err){
+      console.error('Failed to delete remote entry', err);
+      alert('削除に失敗しました: ' + (err && err.message ? err.message : ''));
+      return;
+    }
+  }
+  // Otherwise, treat id as numeric (IndexedDB)
+  try{
+    const numericId = (typeof _editingEntry.id === 'number') ? _editingEntry.id : Number(_editingEntry.id);
+    if(!Number.isFinite(numericId)){
+      // Not a valid numeric id; try to find by timestamp & text
+      const entries = await getAllEntriesFromIDB();
+      const found = entries.find(e=> e.ts === _editingEntry.ts && e.text === _editingEntry.text);
+      if(found) await deleteEntryFromIDB(found.id);
+    }else{
+      await deleteEntryFromIDB(numericId);
+    }
+    await render();
+    closeEditModal();
+  }catch(err){
+    console.error('Failed to delete IDB entry', err);
+    alert('ローカル削除に失敗しました: ' + (err && err.message ? err.message : ''));
   }
 }
 
