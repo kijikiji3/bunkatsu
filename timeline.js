@@ -316,6 +316,9 @@ function buildEntryElement(e){
   el.appendChild(dot);
   el.appendChild(body);
 
+  // make entry focusable for keyboard and add visual affordance
+  el.tabIndex = 0;
+
   // Long-press / long-click support to enter selection mode
   let longPressTimer = null;
   let startX = 0, startY = 0;
@@ -323,12 +326,14 @@ function buildEntryElement(e){
     if(selectionMode) return;
     const p = ev.touches ? ev.touches[0] : ev;
     startX = p.clientX; startY = p.clientY;
+    el.classList.add('pressing');
     longPressTimer = setTimeout(()=>{
       longPressTimer = null; // mark that long-press fired
       enterSelectionMode(e, el);
+      el.classList.remove('pressing');
     }, 600);
   };
-  const cancelPress = ()=>{ if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; } };
+  const cancelPress = ()=>{ if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; } el.classList.remove('pressing'); };
   el.addEventListener('touchstart', startPress, {passive:true});
   el.addEventListener('mousedown', startPress);
   el.addEventListener('touchmove', (ev)=>{ if(!longPressTimer) return; const p = ev.touches[0]; if(Math.hypot(p.clientX-startX, p.clientY-startY) > 10) cancelPress(); }, {passive:true});
@@ -336,14 +341,17 @@ function buildEntryElement(e){
   el.addEventListener('touchend', (ev)=>{
     if(longPressTimer){ cancelPress(); }
     if(selectionMode){ toggleSelectElement(el); }
+    el.classList.remove('pressing');
   }, {passive:true});
   el.addEventListener('mouseup', (ev)=>{
     if(longPressTimer){ cancelPress(); }
     if(selectionMode){ toggleSelectElement(el); }
     else { openEditModal(e); }
+    el.classList.remove('pressing');
   });
-  // For accessibility: also handle simple click for keyboard users
+  // For accessibility: also handle simple click/keyboard activation
   el.addEventListener('click', (ev)=>{ if(selectionMode) ev.preventDefault(); });
+  el.addEventListener('keydown', (ev)=>{ if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); if(selectionMode) toggleSelectElement(el); else openEditModal(e); } });
 
   return el;
 }
