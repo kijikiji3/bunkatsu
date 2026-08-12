@@ -1,9 +1,4 @@
-// Autosize textarea and timeline diary with image attach + IndexedDB (sync-ready)
-// Extended: three side-by-side timelines (categories). Existing entries default to category 'c1'.
-const form = document.getElementById('entryForm');
-const textarea = document.getElementById('content');
-const imageInput = document.getElementById('imageInput');
-const preview = document.getElementById('preview');
+// Autosize helper and app element references (no file attachments)
 const timeline = document.getElementById('timeline');
 const signInBtn = document.getElementById('signInBtn');
 const signOutBtn = document.getElementById('signOutBtn');
@@ -17,24 +12,6 @@ function autosize(el){
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
 }
-textarea.addEventListener('input', ()=> autosize(textarea));
-window.addEventListener('load', ()=> autosize(textarea));
-
-// Use File object and ObjectURL for preview; store blobs in IndexedDB for sync.
-let selectedImageFile = null;
-let previewObjectUrl = null;
-imageInput.addEventListener('change', (e)=>{
-  const f = e.target.files && e.target.files[0];
-  preview.innerHTML = '';
-  if(previewObjectUrl){ URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
-  selectedImageFile = null;
-  if(!f) return;
-  selectedImageFile = f; // Blob/File
-  previewObjectUrl = URL.createObjectURL(f);
-  const img = document.createElement('img');
-  img.src = previewObjectUrl;
-  preview.appendChild(img);
-});
 
 // IndexedDB helpers
 function openDB(){
@@ -164,12 +141,7 @@ async function migrateLocalStorageToIDB(){
   }catch(err){ console.error('Migration failed', err); }
 }
 
-function clearPreviewAndFile(){
-  if(previewObjectUrl){ URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
-  preview.innerHTML = '';
-  selectedImageFile = null;
-  imageInput.value = '';
-}
+
 
 function createColumnDOM(catKey){
   const col = document.createElement('div');
@@ -194,6 +166,41 @@ function createColumnDOM(catKey){
     }
   });
   col.appendChild(header);
+
+  // per-category input form (textarea + send button)
+  const form = document.createElement('form');
+  form.className = 'column-form';
+  form.innerHTML = `
+    <div class="input-row">
+      <textarea class="autosize column-text" placeholder="このカテゴリに追加..." rows="1"></textarea>
+      <div class="right-controls"><button class="sendBtn" type="submit">送信</button></div>
+    </div>
+  `;
+  const textareaEl = form.querySelector('.column-text');
+  textareaEl.addEventListener('input', ()=> autosize(textareaEl));
+  form.addEventListener('submit', async (ev)=>{
+    ev.preventDefault();
+    const txt = textareaEl.value.trim();
+    if(!txt) return;
+    const entry = { text: txt, ts: new Date().toISOString(), category: catKey };
+    if(currentUser && window._fb && window._fb.db){
+      try{
+        await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').add({ text: entry.text, ts: entry.ts, category: entry.category });
+      }catch(err){
+        console.error('Failed to save to Firestore, falling back to IDB', err);
+        alert('Firebaseへの保存に失敗しました。ローカルに保存します。エラー: ' + (err && err.message ? err.message : String(err)));
+        await addEntryToIDB(entry);
+        await render();
+      }
+    }else{
+      try{ await addEntryToIDB(entry); }catch(err){ console.error('Failed to save to IDB', err); }
+    }
+    textareaEl.value = '';
+    autosize(textareaEl);
+    if(!currentUser) render();
+  });
+  col.appendChild(form);
+
   const list = document.createElement('div');
   list.className = 'column-list';
   list.dataset.key = catKey;
@@ -358,41 +365,6 @@ if(window._fb && window._fb.auth){
   });
 }
 
-form.addEventListener('submit', async (ev)=>{
-  ev.preventDefault();
-  const txt = textarea.value.trim();
-  if(!txt && !selectedImageFile) return; // nothing to save
-  const entry = { text: txt, ts: new Date().toISOString() };
-  if(selectedImageFile){ entry.imageBlob = selectedImageFile; }
-  // default to leftmost timeline
-  entry.category = 'c1';
-
-  if(currentUser && window._fb && window._fb.db){
-    try{
-      // Save text-only to Firestore under users/{uid}/entries
-      await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').add({ text: entry.text, ts: entry.ts, category: entry.category });
-    }catch(err){
-      console.error('Failed to save to Firestore, falling back to IDB', err);
-      alert('Firebaseへの保存に失敗しました。ローカルに保存します。エラー: ' + (err && err.message ? err.message : String(err)));
-      // Save locally and re-render so the entry appears immediately while outbox sync runs
-      await addEntryToIDB(entry);
-      await render();
-    }
-  }else{
-    try{
-      await addEntryToIDB(entry);
-    }catch(err){
-      console.error('Failed to save to IDB', err);
-    }
-  }
-
-  // reset
-  textarea.value = '';
-  autosize(textarea);
-  clearPreviewAndFile();
-  // re-render (if not using Firestore listener)
-  if(!currentUser) render();
-});
 
 // initial render (if not authenticated yet)
 render();
