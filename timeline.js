@@ -154,26 +154,49 @@ async function migrateLocalStorageToIDB(){
 function createColumnDOM(catKey){
   const col = document.createElement('div');
   col.className = 'timeline-column';
+  const headerRow = document.createElement('div');
+  headerRow.className = 'title-row';
+
   const header = document.createElement('h3');
   header.className = 'timeline-title';
   header.dataset.key = catKey;
   header.contentEditable = 'true';
   header.spellcheck = false;
-  header.addEventListener('blur', async (ev)=>{
-    const newTitle = ev.target.textContent.trim() || DEFAULT_TITLES[catKey];
-    ev.target.textContent = newTitle;
-    // save locally and if logged in, push to Firestore
-    const titles = await getCategoryTitlesFromIDB();
-    titles[catKey] = newTitle;
-    await saveCategoryTitlesToIDB(titles);
+
+  // Confirm button to explicitly save title changes
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'title-confirm';
+  confirmBtn.type = 'button';
+  confirmBtn.textContent = '確定';
+  confirmBtn.style.display = 'none';
+
+  // Show confirm when editing begins
+  header.addEventListener('focus', ()=>{ confirmBtn.style.display = ''; });
+  header.addEventListener('input', ()=>{ confirmBtn.style.display = ''; });
+  // Hide confirm shortly after blur (allow click)
+  header.addEventListener('blur', ()=>{ setTimeout(()=>{ if(document.activeElement !== confirmBtn) confirmBtn.style.display = 'none'; }, 200); });
+
+  confirmBtn.addEventListener('click', async ()=>{
+    const newTitle = header.textContent.trim() || DEFAULT_TITLES[catKey];
+    header.textContent = newTitle;
+    // save locally
+    try{
+      const titles = await getCategoryTitlesFromIDB();
+      titles[catKey] = newTitle;
+      await saveCategoryTitlesToIDB(titles);
+    }catch(err){ console.warn('Failed to save category titles to IDB', err); }
+    // save to Firestore (if signed in)
     if(currentUser && window._fb && window._fb.db){
       try{
-        const docRef = window._fb.db.collection('users').doc(currentUser.uid);
-        await docRef.set({ categories: titles }, { merge: true });
-      }catch(err){ console.warn('Failed to sync category titles to Firestore', err); }
+        await window._fb.db.collection('users').doc(currentUser.uid).set({ categories: await getCategoryTitlesFromIDB() }, { merge: true });
+      }catch(err){ console.warn('Failed to sync category titles to Firestore', err); alert('Firebaseへの保存に失敗しました: ' + (err && err.message ? err.message : '')); }
     }
+    confirmBtn.style.display = 'none';
   });
-  col.appendChild(header);
+
+  headerRow.appendChild(header);
+  headerRow.appendChild(confirmBtn);
+  col.appendChild(headerRow);
 
   // per-category input form (textarea + send button)
   const form = document.createElement('form');
@@ -763,7 +786,6 @@ async function deleteEntry(){
   }
 }
 
-let firestoreListenerUnsub = null;
 
 async function render(){
   await migrateLocalStorageToIDB();
@@ -775,6 +797,36 @@ async function render(){
 
 // Firebase auth + Firestore integration (text-only sync)
 let currentUser = null;
+let firestoreListenerUnsub = null;
+let firestoreCategoryUnsub = null;
+
+async function listenToCategoryTitles(uid){
+  if(!window._fb || !window._fb.db) return Promise.resolve();
+  if(firestoreCategoryUnsub) firestoreCategoryUnsub();
+  const docRef = window._fb.db.collection('users').doc(uid);
+  let first = true;
+  return new Promise((resolve, reject)=>{
+    firestoreCategoryUnsub = docRef.onSnapshot(doc=>{
+      const data = (doc && doc.exists) ? doc.data() : null;
+      if(data && data.categories){
+        // save to IDB and update UI
+        saveCategoryTitlesToIDB(data.categories).then(()=>{
+          // update UI titles without reloading entries
+          const headers = document.querySelectorAll('.timeline-title');
+          for(const k of CATEGORY_KEYS){
+            const el = document.querySelector('.timeline-title[data-key="'+k+'"]');
+            if(el) el.textContent = data.categories[k] || DEFAULT_TITLES[k];
+          }
+        }).catch(err=>console.warn('Failed to save category titles from snapshot', err));
+      }
+      if(first){ first = false; resolve(); }
+    }, err=>{
+      console.warn('Category titles listener failed', err);
+      if(first){ first = false; reject(err); }
+    });
+  });
+}
+
 
 function showUser(u){
   if(u){
@@ -848,8 +900,14 @@ if(window._fb && window._fb.auth){
       if(remoteTitles){
         await saveCategoryTitlesToIDB(remoteTitles);
       }
-      // flush local outbox to Firestore then listen to remote entries and wait for first snapshot before returning
+      // flush local outbox to Firestore then listen to remote category titles and entries
       await flushOutboxToFirestore(user.uid);
+      try{
+        // start listening to category titles first so UI headers show remote values quickly
+        await listenToCategoryTitles(user.uid);
+      }catch(err){
+        console.warn('Listening to category titles failed', err);
+      }
       try{
         await listenToUserEntries(user.uid);
       }catch(err){
@@ -859,6 +917,7 @@ if(window._fb && window._fb.auth){
     }else{
       // stop listening and render local IDB
       if(firestoreListenerUnsub) firestoreListenerUnsub();
+      if(firestoreCategoryUnsub) firestoreCategoryUnsub();
       render();
     }
   });

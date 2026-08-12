@@ -37,13 +37,20 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 .no-entries{color:var(--muted);text-align:center;padding:24px}
 
 @media (max-width:900px){
-  .timeline-columns{flex-direction:column;gap:12px}
+  .timeline-columns{flex-direction:column;gap:12px;align-items:stretch}
+  .timeline-column{width:100%}
 }
 
 @media (min-width:1200px){
   /* Add horizontal padding so columns reach near edges but keep breathing room */
   .app{padding-left:48px;padding-right:48px}
 }
+
+/* Title row for editable headers */
+.title-row{display:flex;align-items:center;gap:8px}
+.timeline-title{flex:1;margin:0;padding:8px 10px;border-radius:8px;background:linear-gradient(90deg,rgba(79,70,229,.06),rgba(79,70,229,.03));font-size:16px;cursor:text;border:1px solid transparent}
+.title-confirm{background:#2563eb;color:#fff;border:none;padding:6px 8px;border-radius:6px;cursor:pointer}
+.title-confirm[style*="display: none"]{display:none}
 
 /* Modal / edit dialog styles */
 .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:60}
