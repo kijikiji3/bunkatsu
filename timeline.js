@@ -222,7 +222,10 @@ async function flushOutboxToFirestore(uid){
       await col.add({ text: o.text || '', ts: o.ts });
     }
     await clearOutbox();
-  }catch(err){ console.error('Failed to flush outbox', err); }
+  }catch(err){
+    console.error('Failed to flush outbox', err);
+    alert('Firebaseへの同期に失敗しました: ' + (err && err.message ? err.message : String(err)));
+  }
 }
 
 // Auth handlers
@@ -268,6 +271,7 @@ form.addEventListener('submit', async (ev)=>{
       await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').add({ text: entry.text, ts: entry.ts });
     }catch(err){
       console.error('Failed to save to Firestore, falling back to IDB', err);
+      alert('Firebaseへの保存に失敗しました。ローカルに保存します。エラー: ' + (err && err.message ? err.message : String(err)));
       // Save locally and re-render so the entry appears immediately while outbox sync runs
       await addEntryToIDB(entry);
       await render();
