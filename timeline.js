@@ -362,8 +362,11 @@ function setupDrag(container){
         const dx = mx - startX; const dy = my - startY;
         let nx = origLeft + dx; let ny = origTop + dy;
         // allow overlapping beyond container bounds a bit
-        nx = Math.max(-100, Math.min(nx, container.clientWidth - rect.width + 100));
-        ny = Math.max(-100, Math.min(ny, container.clientHeight - rect.height + 100));
+        // Use containerRect (bounding box) and window height as fallback — container.clientHeight can be 0 for absolutely positioned columns
+        const maxX = containerRect.width - rect.width + 200;
+        const maxY = Math.max(containerRect.height, window.innerHeight) - rect.height + 200;
+        nx = Math.max(-200, Math.min(nx, maxX));
+        ny = Math.max(-200, Math.min(ny, maxY));
         col.style.left = nx + 'px'; col.style.top = ny + 'px';
         col.dataset.x = nx; col.dataset.y = ny;
       }
