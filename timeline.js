@@ -165,6 +165,13 @@ function createColumnDOM(catKey){
   header.contentEditable = 'true';
   header.spellcheck = false;
 
+  // Drag handle (left of title) to avoid interfering with title editing
+  const dragHandle = document.createElement('div');
+  dragHandle.className = 'drag-handle';
+  dragHandle.setAttribute('aria-label', 'ドラッグして移動');
+  dragHandle.title = 'ドラッグして移動';
+  dragHandle.innerHTML = '\u2630'; // simple hamburger glyph
+
   // Confirm button to explicitly save title changes
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'title-confirm';
@@ -196,6 +203,8 @@ function createColumnDOM(catKey){
     confirmBtn.style.display = 'none';
   });
 
+  // insert drag handle before header so user drags handle, not title
+  headerRow.appendChild(dragHandle);
   headerRow.appendChild(header);
   headerRow.appendChild(confirmBtn);
   col.appendChild(headerRow);
@@ -329,11 +338,12 @@ function initCategoryUI(titles){
 function setupDrag(container){
   const cols = Array.from(container.querySelectorAll('.timeline-column'));
   cols.forEach(col=>{
-    const handle = col.querySelector('.title-row') || col;
+    // prefer the dedicated drag handle; fall back to title-row or column itself
+    const handle = col.querySelector('.drag-handle') || col.querySelector('.title-row') || col;
     handle.style.touchAction = 'none';
     handle.addEventListener('mousedown', startDrag);
     handle.addEventListener('touchstart', startDrag, {passive:false});
-    // bring to front when clicked
+    // bring to front when clicked anywhere on column (not only handle)
     col.addEventListener('mousedown', ()=> bringToFront(col));
     function startDrag(e){
       if(window.innerWidth < 900) return;
@@ -351,8 +361,9 @@ function setupDrag(container){
         const my = (ev.touches ? ev.touches[0].clientY : ev.clientY);
         const dx = mx - startX; const dy = my - startY;
         let nx = origLeft + dx; let ny = origTop + dy;
-        nx = Math.max(0, Math.min(nx, container.clientWidth - rect.width));
-        ny = Math.max(0, Math.min(ny, container.clientHeight - rect.height));
+        // allow overlapping beyond container bounds a bit
+        nx = Math.max(-100, Math.min(nx, container.clientWidth - rect.width + 100));
+        ny = Math.max(-100, Math.min(ny, container.clientHeight - rect.height + 100));
         col.style.left = nx + 'px'; col.style.top = ny + 'px';
         col.dataset.x = nx; col.dataset.y = ny;
       }
