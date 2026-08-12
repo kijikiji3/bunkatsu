@@ -399,7 +399,7 @@ async function saveEditedEntry(){
   // Otherwise, update local IDB (numeric id or offline)
   try{
     // Ensure numeric id remains numeric if present as string numeric
-    if(typeof updated.id === 'string' && /^\\?\d+$/.test(updated.id)){
+    if(typeof updated.id === 'string' && /^\d+$/.test(updated.id)){
       updated.id = Number(updated.id);
     }
     await updateEntryInIDB(updated);
