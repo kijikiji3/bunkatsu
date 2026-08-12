@@ -322,6 +322,8 @@ function buildEntryElement(e){
   // Long-press / long-click support to enter selection mode
   let longPressTimer = null;
   let startX = 0, startY = 0;
+  // flag to indicate this element's long-press handler already fired (so release shouldn't toggle it)
+  el._longPressFired = false;
   const startPress = (ev)=>{
     if(selectionMode) return;
     const p = ev.touches ? ev.touches[0] : ev;
@@ -329,24 +331,35 @@ function buildEntryElement(e){
     el.classList.add('pressing');
     longPressTimer = setTimeout(()=>{
       longPressTimer = null; // mark that long-press fired
+      el._longPressFired = true;
       enterSelectionMode(e, el);
       el.classList.remove('pressing');
     }, 600);
   };
-  const cancelPress = ()=>{ if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; } el.classList.remove('pressing'); };
+  const cancelPress = ()=>{ if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; } el.classList.remove('pressing'); el._longPressFired = false; };
   el.addEventListener('touchstart', startPress, {passive:true});
   el.addEventListener('mousedown', startPress);
   el.addEventListener('touchmove', (ev)=>{ if(!longPressTimer) return; const p = ev.touches[0]; if(Math.hypot(p.clientX-startX, p.clientY-startY) > 10) cancelPress(); }, {passive:true});
   el.addEventListener('mousemove', (ev)=>{ if(!longPressTimer) return; if(Math.hypot(ev.clientX-startX, ev.clientY-startY) > 10) cancelPress(); });
   el.addEventListener('touchend', (ev)=>{
     if(longPressTimer){ cancelPress(); }
-    if(selectionMode){ toggleSelectElement(el); }
+    if(selectionMode){
+      // If this element's long-press just fired, keep it selected and clear the flag; otherwise toggle selection
+      if(el._longPressFired){ el._longPressFired = false; }
+      else { toggleSelectElement(el); }
+    }
     el.classList.remove('pressing');
   }, {passive:true});
   el.addEventListener('mouseup', (ev)=>{
     if(longPressTimer){ cancelPress(); }
-    if(selectionMode){ toggleSelectElement(el); }
-    else { openEditModal(e); }
+    if(selectionMode){
+      if(el._longPressFired){ el._longPressFired = false; }
+      else { toggleSelectElement(el); }
+    }else {
+      // if long-press fired, treat as starting selection and do not open edit modal
+      if(!el._longPressFired) openEditModal(e);
+      else el._longPressFired = false;
+    }
     el.classList.remove('pressing');
   });
   // For accessibility: also handle simple click/keyboard activation
