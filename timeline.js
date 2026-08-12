@@ -270,6 +270,34 @@ function initCategoryUI(titles){
   timeline.appendChild(container);
 
   // Setup drag & drop positioning for desktop. JS computes pixel positions and enables dragging.
+  const POS_KEY = 'timeline_column_positions_v1';
+
+  const savePositions = ()=>{
+    try{
+      const cols = Array.from(container.querySelectorAll('.timeline-column'));
+      const out = {};
+      cols.forEach(col=>{
+        const key = col.querySelector('.timeline-title')?.dataset.key || col.dataset.key || '';
+        if(!key) return;
+        const left = parseFloat(col.style.left || col.dataset.x || 0);
+        const top = parseFloat(col.style.top || col.dataset.y || 0);
+        const z = parseInt(col.style.zIndex || 0, 10);
+        out[key] = { left, top, z };
+      });
+      localStorage.setItem(POS_KEY, JSON.stringify(out));
+    }catch(e){ console.warn('Failed to save positions', e); }
+  };
+
+  const loadPositions = ()=>{
+    try{
+      const raw = localStorage.getItem(POS_KEY);
+      if(!raw) return null;
+      return JSON.parse(raw);
+    }catch(e){ return null; }
+  };
+
+  const clearPositions = ()=>{ localStorage.removeItem(POS_KEY); };
+
   const applyInitialPositions = ()=>{
     const cols = Array.from(container.querySelectorAll('.timeline-column'));
     if(window.innerWidth < 900){
@@ -284,9 +312,35 @@ function initCategoryUI(titles){
       });
       return;
     }
-    const cw = Math.max(container.clientWidth, timeline.clientWidth);
+
+    const stored = loadPositions();
+    const containerRect = container.getBoundingClientRect();
+    const cw = Math.max(container.clientWidth, timeline.clientWidth, containerRect.width || 800);
     const padding = 20;
     const colWidth = Math.min(360, Math.max(240, Math.floor((cw - padding*4)/3)));
+
+    if(stored){
+      // apply stored positions (clamped to container/window bounds)
+      cols.forEach((col,i)=>{
+        const key = col.querySelector('.timeline-title')?.dataset.key || col.dataset.key || '';
+        col.style.width = colWidth + 'px';
+        col.style.position = 'absolute';
+        const info = stored[key];
+        let x = info ? info.left : (padding + i * (colWidth + padding));
+        let y = info ? info.top : 12;
+        const maxX = Math.max(containerRect.width, window.innerWidth) - colWidth - 20;
+        const maxY = Math.max(containerRect.height, window.innerHeight) - col.clientHeight - 20;
+        x = Math.max(-200, Math.min(x, maxX));
+        y = Math.max(-200, Math.min(y, maxY));
+        col.style.left = x + 'px'; col.style.top = y + 'px';
+        col.dataset.x = x; col.dataset.y = y;
+        col.classList.add('draggable');
+        if(info && typeof info.z === 'number') col.style.zIndex = info.z; else col.style.zIndex = ++zIndexCounter;
+      });
+      return;
+    }
+
+    // No stored positions -> compute defaults
     cols.forEach((col,i)=>{
       col.style.width = colWidth + 'px';
       let x = 0, y = 12;
@@ -311,6 +365,7 @@ function initCategoryUI(titles){
   };
 
   applyInitialPositions();
+  // On resize, re-apply stored positions if present, otherwise compute defaults
   window.addEventListener('resize', ()=>{ applyInitialPositions(); });
   setupDrag(container);
 
@@ -330,6 +385,8 @@ function initCategoryUI(titles){
         col.dataset.x = x; col.dataset.y = y;
         col.style.zIndex = ++zIndexCounter;
       });
+      // clear saved positions
+      clearPositions();
     });
   }
 }
@@ -375,6 +432,8 @@ function setupDrag(container){
         document.removeEventListener('mouseup', onUp);
         document.removeEventListener('touchmove', onMove);
         document.removeEventListener('touchend', onUp);
+        // Save positions after drag ends
+        try{ savePositions(); }catch(e){/* ignore */}
       }
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
