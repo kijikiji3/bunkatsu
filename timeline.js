@@ -427,15 +427,8 @@ async function deleteSelectedEntries(){
       try{ await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').doc(ent.id).delete(); }catch(err){ console.warn('Failed delete remote', err); }
     }else{
       try{
-        const idNum = (typeof ent.id === 'number') ? ent.id : Number(ent.id);
-        if(Number.isFinite(idNum)){
-          await deleteEntryFromIDB(idNum);
-        }else{
-          // best-effort search-and-delete by ts/text
-          const all = await getAllEntriesFromIDB();
-          const found = all.find(e=> e.ts === ent.ts && e.text === ent.text);
-          if(found) await deleteEntryFromIDB(found.id);
-        }
+        // Prefer using stable keys / objects to delete precisely
+        await deleteEntryFromIDB(ent);
       }catch(err){ console.warn('Failed delete local', err); }
     }
   }
@@ -552,23 +545,83 @@ async function saveEditedEntry(){
 }
 
 // Deletion helpers
-async function deleteEntryFromIDB(id){
+async function deleteEntryFromIDB(identifier){
   const db = await openDB();
   return new Promise((resolve, reject)=>{
     const tx = db.transaction(['entries','outbox'], 'readwrite');
     const entries = tx.objectStore('entries');
     const outbox = tx.objectStore('outbox');
-    try{
-      entries.delete(id);
-    }catch(e){/* ignore */}
-    const req = outbox.openCursor();
-    req.onsuccess = (ev)=>{
-      const cursor = ev.target.result;
-      if(cursor){
-        if(cursor.value && cursor.value.entryId === id) cursor.delete();
-        cursor.continue();
-      }
+
+    const deleteByNumericId = (numId)=>{
+      try{ entries.delete(numId); }catch(e){}
+      // remove outbox items that reference this id
+      const req = outbox.openCursor();
+      req.onsuccess = (ev)=>{
+        const cursor = ev.target.result;
+        if(cursor){
+          if(cursor.value && cursor.value.entryId === numId) cursor.delete();
+          cursor.continue();
+        }
+      };
     };
+
+    // Helper to scan entries and find numeric id by matching _tmpKey or ts+text
+    const findAndDelete = ()=>{
+      const getAllReq = entries.getAll();
+      getAllReq.onsuccess = ()=>{
+        const all = getAllReq.result || [];
+        let found = null;
+        if(typeof identifier === 'string' && identifier.startsWith('tmp:')){
+          found = all.find(e=> e._tmpKey === identifier);
+        }
+        if(!found && typeof identifier === 'object' && identifier !== null){
+          found = all.find(e=> e.ts === identifier.ts && e.text === identifier.text);
+        }
+        if(!found && typeof identifier === 'string' && /^\d+$/.test(identifier)){
+          // numeric string
+          deleteByNumericId(Number(identifier));
+        }else if(found){
+          deleteByNumericId(found.id);
+        }
+      };
+      getAllReq.onerror = ()=>{/* ignore */};
+    };
+
+    try{
+      if(typeof identifier === 'number' && Number.isFinite(identifier)){
+        deleteByNumericId(identifier);
+      }else if(typeof identifier === 'string'){
+        if(/^\d+$/.test(identifier)){
+          deleteByNumericId(Number(identifier));
+        }else if(identifier.startsWith('tmp:')){
+          findAndDelete();
+        }else{
+          // fallback: try to find by ts+text pattern stored as string key
+          findAndDelete();
+        }
+      }else if(typeof identifier === 'object' && identifier !== null){
+        if(typeof identifier.id === 'number' && Number.isFinite(identifier.id)){
+          deleteByNumericId(identifier.id);
+        }else if(typeof identifier.id === 'string' && /^\d+$/.test(identifier.id)){
+          deleteByNumericId(Number(identifier.id));
+        }else if(identifier._tmpKey){
+          // try match tmpKey
+          const tmp = identifier._tmpKey;
+          const getAllReq = entries.getAll();
+          getAllReq.onsuccess = ()=>{
+            const all = getAllReq.result || [];
+            const found = all.find(e=> e._tmpKey === tmp);
+            if(found) deleteByNumericId(found.id);
+          };
+        }else{
+          // best-effort by ts+text
+          findAndDelete();
+        }
+      }
+    }catch(err){
+      console.warn('deleteEntryFromIDB failed', err);
+    }
+
     tx.oncomplete = ()=> resolve();
     tx.onerror = ()=> reject(tx.error);
   });
