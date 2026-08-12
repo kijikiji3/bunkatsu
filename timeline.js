@@ -775,6 +775,36 @@ async function render(){
 
 // Firebase auth + Firestore integration (text-only sync)
 let currentUser = null;
+let firestoreListenerUnsub = null;
+let firestoreCategoryUnsub = null;
+
+async function listenToCategoryTitles(uid){
+  if(!window._fb || !window._fb.db) return Promise.resolve();
+  if(firestoreCategoryUnsub) firestoreCategoryUnsub();
+  const docRef = window._fb.db.collection('users').doc(uid);
+  let first = true;
+  return new Promise((resolve, reject)=>{
+    firestoreCategoryUnsub = docRef.onSnapshot(doc=>{
+      const data = (doc && doc.exists) ? doc.data() : null;
+      if(data && data.categories){
+        // save to IDB and update UI
+        saveCategoryTitlesToIDB(data.categories).then(()=>{
+          // update UI titles without reloading entries
+          const headers = document.querySelectorAll('.timeline-title');
+          for(const k of CATEGORY_KEYS){
+            const el = document.querySelector('.timeline-title[data-key="'+k+'"]');
+            if(el) el.textContent = data.categories[k] || DEFAULT_TITLES[k];
+          }
+        }).catch(err=>console.warn('Failed to save category titles from snapshot', err));
+      }
+      if(first){ first = false; resolve(); }
+    }, err=>{
+      console.warn('Category titles listener failed', err);
+      if(first){ first = false; reject(err); }
+    });
+  });
+}
+
 
 function showUser(u){
   if(u){
@@ -848,8 +878,14 @@ if(window._fb && window._fb.auth){
       if(remoteTitles){
         await saveCategoryTitlesToIDB(remoteTitles);
       }
-      // flush local outbox to Firestore then listen to remote entries and wait for first snapshot before returning
+      // flush local outbox to Firestore then listen to remote category titles and entries
       await flushOutboxToFirestore(user.uid);
+      try{
+        // start listening to category titles first so UI headers show remote values quickly
+        await listenToCategoryTitles(user.uid);
+      }catch(err){
+        console.warn('Listening to category titles failed', err);
+      }
       try{
         await listenToUserEntries(user.uid);
       }catch(err){
@@ -859,6 +895,7 @@ if(window._fb && window._fb.auth){
     }else{
       // stop listening and render local IDB
       if(firestoreListenerUnsub) firestoreListenerUnsub();
+      if(firestoreCategoryUnsub) firestoreCategoryUnsub();
       render();
     }
   });
