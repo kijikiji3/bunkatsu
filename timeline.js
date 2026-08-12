@@ -329,13 +329,23 @@ function buildEntryElement(e){
   el._entryObject = e;
 
   const dot = document.createElement('div'); dot.className='dot';
+  // Timestamp on the left: show as "yy/m/d" on first line and "hh:mm" on second
+  const timeEl = document.createElement('div'); timeEl.className = 'entry-time';
+  const d = new Date(e.ts || Date.now());
+  const yy = String(d.getFullYear()).slice(-2);
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  timeEl.innerHTML = `${yy}/${m}/${day}<br>${hh}:${mm}`;
+  timeEl.title = d.toLocaleString();
+
   const body = document.createElement('div'); body.className='body';
-  const meta = document.createElement('div'); meta.className='meta';
-  meta.textContent = new Date(e.ts).toLocaleString();
   const text = document.createElement('div'); text.className='text';
   text.textContent = e.text || '';
-  body.appendChild(meta);
   body.appendChild(text);
+
+  el.appendChild(timeEl);
   el.appendChild(dot);
   el.appendChild(body);
 
