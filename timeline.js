@@ -61,7 +61,15 @@ async function getAllEntriesFromIDB(){
     const store = tx.objectStore('entries');
     const req = store.getAll();
     req.onsuccess = ()=>{
-      const arr = req.result || [];
+      let arr = req.result || [];
+      // normalize category defaults and ensure stable tmp keys
+      arr = arr.map(e=>{
+        if(!e.category) e.category = 'c1';
+        if(e.id === undefined || e.id === null){
+          if(!e._tmpKey) e._tmpKey = 'tmp:' + Date.now() + ':' + Math.random();
+        }
+        return e;
+      });
       // sort by ts desc
       arr.sort((a,b)=> b.ts.localeCompare(a.ts));
       resolve(arr);
@@ -178,6 +186,14 @@ function createColumnDOM(catKey){
   `;
   const textareaEl = form.querySelector('.column-text');
   textareaEl.addEventListener('input', ()=> autosize(textareaEl));
+  // Ctrl+Enter or Cmd+Enter to submit from the textarea
+  textareaEl.addEventListener('keydown', (ev)=>{
+    if((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter'){
+      ev.preventDefault();
+      if(typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.dispatchEvent(new Event('submit', {cancelable:true}));
+    }
+  });
   form.addEventListener('submit', async (ev)=>{
     ev.preventDefault();
     const txt = textareaEl.value.trim();
@@ -281,6 +297,14 @@ function renderEntries(list){
 function buildEntryElement(e){
   const el = document.createElement('article');
   el.className = 'entry';
+  // expose id and category for optimistic updates and editing
+  if(e.id !== undefined) el.dataset.id = String(e.id);
+  el.dataset.category = e.category || 'c1';
+  const key = getEntryKey(e);
+  el.dataset.key = key;
+  // keep pointer to entry object for selection handlers
+  el._entryObject = e;
+
   const dot = document.createElement('div'); dot.className='dot';
   const body = document.createElement('div'); body.className='body';
   const meta = document.createElement('div'); meta.className='meta';
@@ -291,7 +315,452 @@ function buildEntryElement(e){
   body.appendChild(text);
   el.appendChild(dot);
   el.appendChild(body);
+
+  // make entry focusable for keyboard and add visual affordance
+  el.tabIndex = 0;
+
+  // Long-press / long-click support to enter selection mode
+  let longPressTimer = null;
+  let startX = 0, startY = 0;
+  // flag to indicate this element's long-press handler already fired (so release shouldn't toggle it)
+  el._longPressFired = false;
+  const startPress = (ev)=>{
+    if(selectionMode) return;
+    const p = ev.touches ? ev.touches[0] : ev;
+    startX = p.clientX; startY = p.clientY;
+    el.classList.add('pressing');
+    longPressTimer = setTimeout(()=>{
+      longPressTimer = null; // mark that long-press fired
+      el._longPressFired = true;
+      enterSelectionMode(e, el);
+      el.classList.remove('pressing');
+    }, 600);
+  };
+  const cancelPress = ()=>{ if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; } el.classList.remove('pressing'); el._longPressFired = false; };
+  el.addEventListener('touchstart', startPress, {passive:true});
+  el.addEventListener('mousedown', startPress);
+  el.addEventListener('touchmove', (ev)=>{ if(!longPressTimer) return; const p = ev.touches[0]; if(Math.hypot(p.clientX-startX, p.clientY-startY) > 10) cancelPress(); }, {passive:true});
+  el.addEventListener('mousemove', (ev)=>{ if(!longPressTimer) return; if(Math.hypot(ev.clientX-startX, ev.clientY-startY) > 10) cancelPress(); });
+  el.addEventListener('touchend', (ev)=>{
+    if(longPressTimer){ cancelPress(); }
+    if(selectionMode){
+      // If this element's long-press just fired, keep it selected and clear the flag; otherwise toggle selection
+      if(el._longPressFired){ el._longPressFired = false; }
+      else { toggleSelectElement(el); }
+    }
+    el.classList.remove('pressing');
+  }, {passive:true});
+  el.addEventListener('mouseup', (ev)=>{
+    if(longPressTimer){ cancelPress(); }
+    if(selectionMode){
+      if(el._longPressFired){ el._longPressFired = false; }
+      else { toggleSelectElement(el); }
+    }else {
+      // if long-press fired, treat as starting selection and do not open edit modal
+      if(!el._longPressFired) openEditModal(e);
+      else el._longPressFired = false;
+    }
+    el.classList.remove('pressing');
+  });
+  // For accessibility: also handle simple click/keyboard activation
+  el.addEventListener('click', (ev)=>{ if(selectionMode) ev.preventDefault(); });
+  el.addEventListener('keydown', (ev)=>{ if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); if(selectionMode) toggleSelectElement(el); else openEditModal(e); } });
+
   return el;
+}
+
+function toggleSelectElement(el){
+  if(!el || !el._entryObject) return;
+  const ent = el._entryObject;
+  if(selectionCategory && ent.category !== selectionCategory) return; // disallow cross-category
+  const key = getEntryKey(ent);
+  if(selectedMap.has(key)){
+    selectedMap.delete(key);
+    el.classList.remove('selected');
+  }else{
+    selectedMap.set(key, ent);
+    el.classList.add('selected');
+  }
+  updateSelectionBar();
+}
+
+// --- Edit modal, selection, and editing helpers ---
+let _editingEntry = null;
+let selectionMode = false;
+let selectionCategory = null;
+const selectedMap = new Map(); // key -> entry object
+
+function getEntryKey(e){
+  if(!e) return '';
+  if(e.id !== undefined && e.id !== null){
+    return (typeof e.id === 'string' ? 's:' : 'n:') + String(e.id);
+  }
+  // ensure a stable temporary key on the object
+  if(!e._tmpKey) e._tmpKey = 'tmp:' + Date.now() + ':' + Math.random();
+  return e._tmpKey;
+}
+
+function createSelectionBar(){
+  if(document.getElementById('selectionBar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'selectionBar';
+  bar.className = 'selection-bar hidden';
+  bar.innerHTML = `
+    <div class="selection-inner">
+      <span id="selectionCount">選択 0 件</span>
+      <div class="selection-actions">
+        <button id="selectionCancelBtn" type="button">キャンセル</button>
+        <button id="selectionDeleteBtn" type="button" class="danger">削除</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(bar);
+  bar.querySelector('#selectionCancelBtn').addEventListener('click', ()=>{ exitSelectionMode(); });
+  bar.querySelector('#selectionDeleteBtn').addEventListener('click', ()=>{ deleteSelectedEntries(); });
+}
+
+function showSelectionBar(){
+  createSelectionBar();
+  const bar = document.getElementById('selectionBar');
+  if(bar) bar.classList.remove('hidden');
+  updateSelectionBar();
+}
+function hideSelectionBar(){
+  const bar = document.getElementById('selectionBar');
+  if(bar) bar.classList.add('hidden');
+}
+function updateSelectionBar(){
+  const cnt = selectedMap.size;
+  const el = document.getElementById('selectionCount');
+  if(el) el.textContent = `選択 ${cnt} 件`;
+}
+
+function enterSelectionMode(initialEntry, el){
+  selectionMode = true;
+  selectionCategory = initialEntry.category || 'c1';
+  selectedMap.clear();
+  // mark initial element
+  const key = getEntryKey(initialEntry);
+  selectedMap.set(key, initialEntry);
+  if(el) el.classList.add('selected');
+  showSelectionBar();
+}
+
+function exitSelectionMode(){
+  selectionMode = false;
+  selectionCategory = null;
+  selectedMap.clear();
+  document.querySelectorAll('.entry.selected').forEach(e=> e.classList.remove('selected'));
+  hideSelectionBar();
+}
+
+async function deleteSelectedEntries(){
+  if(selectedMap.size === 0) return;
+  const entries = Array.from(selectedMap.values());
+  const remoteDeletes = [];
+  const localCandidates = [];
+  for(const ent of entries){
+    if(currentUser && window._fb && window._fb.db && typeof ent.id === 'string'){
+      // remote doc id (Firestore)
+      remoteDeletes.push(ent.id);
+    }else{
+      localCandidates.push(ent);
+    }
+  }
+
+  // Perform local deletions in a single transaction to avoid intermediate inconsistent UI
+  if(localCandidates.length > 0){
+    try{
+      await deleteEntriesFromIDBBulk(localCandidates);
+    }catch(err){ console.warn('Failed bulk local delete', err); }
+  }
+
+  // Perform remote deletions in parallel (Firestore)
+  if(remoteDeletes.length > 0){
+    try{
+      const colRef = window._fb.db.collection('users').doc(currentUser.uid).collection('entries');
+      await Promise.all(remoteDeletes.map(id => colRef.doc(id).delete().catch(err=>{ console.warn('Failed remote delete', id, err); })));
+    }catch(err){ console.warn('Failed remote deletes', err); }
+  }
+
+  exitSelectionMode();
+  // If we deleted remote docs, the Firestore listener will update the UI — avoid immediate local render to prevent transient mismatch.
+  if(remoteDeletes.length === 0){
+    await render();
+  }
+}
+
+async function deleteEntriesFromIDBBulk(candidates){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(['entries','outbox'], 'readwrite');
+    const entriesStore = tx.objectStore('entries');
+    const outboxStore = tx.objectStore('outbox');
+
+    // gather numeric ids to delete and tmpKeys / ts-text matches
+    const numericIds = new Set();
+    const tmpKeys = new Set();
+    const tsTextList = [];
+    for(const c of candidates){
+      if(c.id !== undefined && c.id !== null && typeof c.id === 'number') numericIds.add(c.id);
+      else if(c.id !== undefined && c.id !== null && typeof c.id === 'string' && /^\d+$/.test(c.id)) numericIds.add(Number(c.id));
+      else if(c._tmpKey) tmpKeys.add(c._tmpKey);
+      else tsTextList.push({ ts: c.ts, text: c.text });
+    }
+
+    // Get all entries once, find matches for tmpKeys and ts/text
+    const allReq = entriesStore.getAll();
+    allReq.onsuccess = ()=>{
+      const all = allReq.result || [];
+      for(const e of all){
+        if(tmpKeys.size > 0 && e._tmpKey && tmpKeys.has(e._tmpKey)) numericIds.add(e.id);
+        for(const t of tsTextList){ if(e.ts === t.ts && e.text === t.text) numericIds.add(e.id); }
+      }
+
+      // Delete entries and corresponding outbox items
+      for(const id of Array.from(numericIds)){
+        try{ entriesStore.delete(id); }catch(e){/* ignore */}
+      }
+
+      // remove matching outbox items
+      const cursorReq = outboxStore.openCursor();
+      cursorReq.onsuccess = (ev)=>{
+        const cursor = ev.target.result;
+        if(cursor){
+          if(cursor.value && numericIds.has(cursor.value.entryId)) cursor.delete();
+          cursor.continue();
+        }
+      };
+    };
+    allReq.onerror = ()=>{/* ignore */};
+
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+function createEditModal(){
+  if(document.getElementById('editModal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'editModal';
+  modal.className = 'modal hidden';
+  modal.innerHTML = `
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true">
+      <button id="deleteBtn" class="trash-btn" aria-label="削除">🗑️</button>
+      <h3>エントリーを編集</h3>
+      <textarea id="editText" rows="6" placeholder="テキストを編集..." style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <input id="editDatetime" type="datetime-local" style="flex:1;padding:6px;border-radius:6px;border:1px solid #ddd">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button id="editCancelBtn" type="button">キャンセル</button>
+        <button id="editSaveBtn" type="button" style="background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:6px">保存</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // handlers
+  modal.querySelector('.modal-backdrop').addEventListener('click', closeEditModal);
+  modal.querySelector('#editCancelBtn').addEventListener('click', closeEditModal);
+  modal.querySelector('#deleteBtn').addEventListener('click', deleteEntry);
+  modal.querySelector('#editSaveBtn').addEventListener('click', saveEditedEntry);
+}
+
+function openEditModal(entry){
+  createEditModal();
+  _editingEntry = entry;
+  const modal = document.getElementById('editModal');
+  const ta = modal.querySelector('#editText');
+  const dt = modal.querySelector('#editDatetime');
+  ta.value = entry.text || '';
+  // convert ISO ts to datetime-local value (local timezone)
+  const d = entry.ts ? new Date(entry.ts) : new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const toLocalDatetime = (date)=>{
+    const yyyy = date.getFullYear();
+    const mm = pad(date.getMonth()+1);
+    const dd = pad(date.getDate());
+    const hh = pad(date.getHours());
+    const min = pad(date.getMinutes());
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  };
+  dt.value = toLocalDatetime(d);
+  modal.classList.remove('hidden');
+  setTimeout(()=> ta.focus(), 50);
+}
+
+function closeEditModal(){
+  const modal = document.getElementById('editModal');
+  if(modal) modal.classList.add('hidden');
+  _editingEntry = null;
+}
+
+async function updateEntryInIDB(entry){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(['entries'], 'readwrite');
+    const store = tx.objectStore('entries');
+    store.put(entry);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function saveEditedEntry(){
+  if(!_editingEntry) return;
+  const modal = document.getElementById('editModal');
+  const ta = modal.querySelector('#editText');
+  const dt = modal.querySelector('#editDatetime');
+  let newText = ta.value.trim();
+  if(!newText) return alert('テキストを空にできません。');
+  const newTs = (dt.value) ? new Date(dt.value).toISOString() : new Date().toISOString();
+
+  const updated = Object.assign({}, _editingEntry, { text: newText, ts: newTs });
+
+  // If this appears to be a Firestore doc (string id) and user is signed in, update remote
+  if(currentUser && window._fb && window._fb.db && typeof updated.id === 'string'){
+    try{
+      await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').doc(updated.id).update({ text: updated.text, ts: updated.ts });
+      // rely on Firestore listener to update UI; still close modal
+      closeEditModal();
+      return;
+    }catch(err){
+      console.error('Failed to update remote entry', err);
+      alert('保存に失敗しました。' + (err && err.message ? err.message : ''));
+    }
+  }
+
+  // Otherwise, update local IDB (numeric id or offline)
+  try{
+    // Ensure numeric id remains numeric if present as string numeric
+    if(typeof updated.id === 'string' && /^\d+$/.test(updated.id)){
+      updated.id = Number(updated.id);
+    }
+    await updateEntryInIDB(updated);
+    await render();
+    closeEditModal();
+  }catch(err){
+    console.error('Failed to update IDB entry', err);
+    alert('ローカル保存に失敗しました。' + (err && err.message ? err.message : ''));
+  }
+}
+
+// Deletion helpers
+async function deleteEntryFromIDB(identifier){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(['entries','outbox'], 'readwrite');
+    const entries = tx.objectStore('entries');
+    const outbox = tx.objectStore('outbox');
+
+    const deleteByNumericId = (numId)=>{
+      try{ entries.delete(numId); }catch(e){}
+      // remove outbox items that reference this id
+      const req = outbox.openCursor();
+      req.onsuccess = (ev)=>{
+        const cursor = ev.target.result;
+        if(cursor){
+          if(cursor.value && cursor.value.entryId === numId) cursor.delete();
+          cursor.continue();
+        }
+      };
+    };
+
+    // Helper to scan entries and find numeric id by matching _tmpKey or ts+text
+    const findAndDelete = ()=>{
+      const getAllReq = entries.getAll();
+      getAllReq.onsuccess = ()=>{
+        const all = getAllReq.result || [];
+        let found = null;
+        if(typeof identifier === 'string' && identifier.startsWith('tmp:')){
+          found = all.find(e=> e._tmpKey === identifier);
+        }
+        if(!found && typeof identifier === 'object' && identifier !== null){
+          found = all.find(e=> e.ts === identifier.ts && e.text === identifier.text);
+        }
+        if(!found && typeof identifier === 'string' && /^\d+$/.test(identifier)){
+          // numeric string
+          deleteByNumericId(Number(identifier));
+        }else if(found){
+          deleteByNumericId(found.id);
+        }
+      };
+      getAllReq.onerror = ()=>{/* ignore */};
+    };
+
+    try{
+      if(typeof identifier === 'number' && Number.isFinite(identifier)){
+        deleteByNumericId(identifier);
+      }else if(typeof identifier === 'string'){
+        if(/^\d+$/.test(identifier)){
+          deleteByNumericId(Number(identifier));
+        }else if(identifier.startsWith('tmp:')){
+          findAndDelete();
+        }else{
+          // fallback: try to find by ts+text pattern stored as string key
+          findAndDelete();
+        }
+      }else if(typeof identifier === 'object' && identifier !== null){
+        if(typeof identifier.id === 'number' && Number.isFinite(identifier.id)){
+          deleteByNumericId(identifier.id);
+        }else if(typeof identifier.id === 'string' && /^\d+$/.test(identifier.id)){
+          deleteByNumericId(Number(identifier.id));
+        }else if(identifier._tmpKey){
+          // try match tmpKey
+          const tmp = identifier._tmpKey;
+          const getAllReq = entries.getAll();
+          getAllReq.onsuccess = ()=>{
+            const all = getAllReq.result || [];
+            const found = all.find(e=> e._tmpKey === tmp);
+            if(found) deleteByNumericId(found.id);
+          };
+        }else{
+          // best-effort by ts+text
+          findAndDelete();
+        }
+      }
+    }catch(err){
+      console.warn('deleteEntryFromIDB failed', err);
+    }
+
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function deleteEntry(){
+  if(!_editingEntry) return;
+  // If firestore doc id (string) and signed in, delete remote doc
+  if(currentUser && window._fb && window._fb.db && typeof _editingEntry.id === 'string'){
+    try{
+      await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').doc(_editingEntry.id).delete();
+      closeEditModal();
+      return;
+    }catch(err){
+      console.error('Failed to delete remote entry', err);
+      alert('削除に失敗しました: ' + (err && err.message ? err.message : ''));
+      return;
+    }
+  }
+  // Otherwise, treat id as numeric (IndexedDB)
+  try{
+    const numericId = (typeof _editingEntry.id === 'number') ? _editingEntry.id : Number(_editingEntry.id);
+    if(!Number.isFinite(numericId)){
+      // Not a valid numeric id; try to find by timestamp & text
+      const entries = await getAllEntriesFromIDB();
+      const found = entries.find(e=> e.ts === _editingEntry.ts && e.text === _editingEntry.text);
+      if(found) await deleteEntryFromIDB(found.id);
+    }else{
+      await deleteEntryFromIDB(numericId);
+    }
+    await render();
+    closeEditModal();
+  }catch(err){
+    console.error('Failed to delete IDB entry', err);
+    alert('ローカル削除に失敗しました: ' + (err && err.message ? err.message : ''));
+  }
 }
 
 let firestoreListenerUnsub = null;
@@ -320,15 +789,24 @@ function showUser(u){
 }
 
 async function listenToUserEntries(uid){
-  if(!window._fb || !window._fb.db) return;
+  if(!window._fb || !window._fb.db) return Promise.resolve();
   if(firestoreListenerUnsub) firestoreListenerUnsub();
   const col = window._fb.db.collection('users').doc(uid).collection('entries').orderBy('ts','desc');
-  firestoreListenerUnsub = col.onSnapshot(snapshot=>{
-    const docs = snapshot.docs.map(d=>({ id: d.id, ...d.data() }));
-    // Firestore stores plain text entries (no images in this app)
-    renderEntries(docs);
-  }, err=>{
-    console.error('Firestore listener error', err);
+  let first = true;
+  return new Promise((resolve, reject)=>{
+    firestoreListenerUnsub = col.onSnapshot(snapshot=>{
+      const docs = snapshot.docs.map(d=>{
+        const data = d.data() || {};
+        if(!data.category) data.category = 'c1';
+        return Object.assign({ id: d.id }, data);
+      });
+      // Firestore stores plain text entries (no images in this app)
+      renderEntries(docs);
+      if(first){ first = false; resolve(); }
+    }, err=>{
+      console.error('Firestore listener error', err);
+      if(first){ first = false; reject(err); }
+    });
   });
 }
 
@@ -367,10 +845,17 @@ if(window._fb && window._fb.auth){
     if(user){
       // load category titles from server (if present) and save to IDB
       const remoteTitles = await loadCategoryTitlesFromFirestore(user.uid);
-      if(remoteTitles){ await saveCategoryTitlesToIDB(remoteTitles); }
-      // flush local outbox to Firestore then listen to remote entries
+      if(remoteTitles){
+        await saveCategoryTitlesToIDB(remoteTitles);
+      }
+      // flush local outbox to Firestore then listen to remote entries and wait for first snapshot before returning
       await flushOutboxToFirestore(user.uid);
-      listenToUserEntries(user.uid);
+      try{
+        await listenToUserEntries(user.uid);
+      }catch(err){
+        console.warn('Listening to Firestore entries failed, falling back to local render', err);
+        await render();
+      }
     }else{
       // stop listening and render local IDB
       if(firestoreListenerUnsub) firestoreListenerUnsub();
