@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>タイムライン日記</title>
+  <link rel="stylesheet" href="./timeline.css">
+</head>
+<body>
+  <main class="app">
+    <header class="composer">
+      <form id="entryForm" class="entry-form">
+        <div class="input-row">
+          <textarea id="content" class="autosize" placeholder="今日の出来事を書いてください..." rows="1"></textarea>
+          <div class="right-controls">
+            <label class="file-label">
+              <input id="imageInput" type="file" accept="image/*" />
+              📎
+            </label>
+            <button id="sendBtn" type="submit">送信</button>
+          </div>
+        </div>
+        <div id="preview" class="preview" aria-live="polite"></div>
+      </form>
+    </header>
+
+    <section id="timeline" class="timeline">
+      <!-- entries go here -->
+    </section>
+  </main>
+
+  <script src="./timeline.js"></script>
+</body>
+</html>
