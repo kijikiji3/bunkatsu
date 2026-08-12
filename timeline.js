@@ -763,7 +763,6 @@ async function deleteEntry(){
   }
 }
 
-let firestoreListenerUnsub = null;
 
 async function render(){
   await migrateLocalStorageToIDB();
