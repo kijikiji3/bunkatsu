@@ -20,9 +20,10 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 .timeline-title:focus{outline:2px solid rgba(79,70,229,.15)}
 
 .column-form{background:transparent;padding:6px}
-.column-form .column-text{width:100%;border:1px solid #e6e9ef;padding:8px;border-radius:8px;resize:none;min-height:40px}
-.column-form .right-controls{display:flex;align-items:center;margin-top:6px}
-.column-form .sendBtn{background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:8px;cursor:pointer}
+.column-form .input-row{display:flex;gap:8px;align-items:flex-start}
+.column-form .column-text{flex:1;width:auto;border:1px solid #e6e9ef;padding:8px;border-radius:8px;resize:none;min-height:40px}
+.column-form .right-controls{display:flex;align-items:center;margin-top:0}
+.column-form .sendBtn{background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;height:40px}
 
 .column-list{display:flex;flex-direction:column;gap:12px;min-height:120px}
 .more-toggle{background:none;border:none;color:var(--accent);cursor:pointer;padding:6px 8px;font-size:14px}
