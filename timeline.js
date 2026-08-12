@@ -737,12 +737,15 @@ function openEditModal(entry){
   };
   dt.value = toLocalDatetime(d);
   modal.classList.remove('hidden');
+  // mark body as modal-open so background cards are dimmed
+  document.body.classList.add('modal-open');
   setTimeout(()=> ta.focus(), 50);
 }
 
 function closeEditModal(){
   const modal = document.getElementById('editModal');
   if(modal) modal.classList.add('hidden');
+  document.body.classList.remove('modal-open');
   _editingEntry = null;
 }
 

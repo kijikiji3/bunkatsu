@@ -67,10 +67,11 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 .title-confirm[style*="display: none"]{display:none}
 
 /* Modal / edit dialog styles */
-.modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:60}
+/* Ensure modal overlays draggable cards (z-index high) */
+.modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:200000}
 .modal.hidden{display:none}
-.modal .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.35)}
-.modal .modal-dialog{position:relative;z-index:61;background:var(--card);padding:16px;border-radius:10px;max-width:720px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,0.12)}
+.modal .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.45)}
+.modal .modal-dialog{position:relative;z-index:200001;background:var(--card);padding:16px;border-radius:10px;max-width:720px;width:92%;box-shadow:0 12px 48px rgba(0,0,0,0.18)}
 .modal .modal-dialog h3{margin:0 0 8px 0}
 .modal .modal-dialog textarea{font-family:inherit}
 .modal .modal-dialog input[type="datetime-local"]{font-family:inherit}
@@ -78,6 +79,13 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 @media (max-width:600px){
   .modal .modal-dialog{width:96%;padding:12px}
 }
+
+/* Dim background cards when modal open */
+.modal-open .timeline-column{filter:brightness(0.85);opacity:0.95;pointer-events:none}
+.modal-open .timeline-column *{pointer-events:none}
+
+/* Ensure modal backdrop covers everything */
+.modal-open .modal-backdrop{background:rgba(0,0,0,0.45)}
 
 /* Trash button in modal */
 .modal .trash-btn{position:absolute;top:8px;right:8px;background:transparent;border:none;color:#e11d48;font-size:20px;line-height:1;padding:6px;border-radius:6px;cursor:pointer}
