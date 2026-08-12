@@ -2,10 +2,13 @@
 // Example: https://console.firebase.google.com/
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  // storageBucket, messagingSenderId, appId optional for this use-case
+  apiKey: "AIzaSyC5Li_ZUexTuoW5tc0omGTbHOfcF9sYtME",
+  authDomain: "bunkatsu-fire.firebaseapp.com",
+  projectId: "bunkatsu-fire",
+  storageBucket: "bunkatsu-fire.firebasestorage.app",
+  messagingSenderId: "269908619663",
+  appId: "1:269908619663:web:303c001aff92a5c8285bfa",
+  measurementId: "G-V2NNQSYFSC"
 };
 
 // Using compat CDN scripts (included before timeline.js) — initialize here
