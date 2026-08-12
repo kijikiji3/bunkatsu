@@ -9,6 +9,12 @@
 <body>
   <main class="app">
     <header class="composer">
+      <div id="auth" style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+        <button id="signInBtn" type="button">Googleでサインイン</button>
+        <button id="signOutBtn" type="button" style="display:none">サインアウト</button>
+        <span id="userInfo" aria-live="polite" style="font-size:0.9rem;color:#333"></span>
+      </div>
+
       <form id="entryForm" class="entry-form">
         <div class="input-row">
           <textarea id="content" class="autosize" placeholder="今日の出来事を書いてください..." rows="1"></textarea>
@@ -29,6 +35,13 @@
     </section>
   </main>
 
+  <!-- Firebase (compat) SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+  <!-- User must edit firebase-config.js with their project values -->
+  <script src="./firebase-config.js"></script>
   <script src="./timeline.js"></script>
 </body>
 </html>
