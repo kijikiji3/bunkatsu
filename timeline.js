@@ -281,6 +281,8 @@ function renderEntries(list){
 function buildEntryElement(e){
   const el = document.createElement('article');
   el.className = 'entry';
+  // expose id for optimistic updates and editing
+  if(e.id !== undefined) el.dataset.id = e.id;
   const dot = document.createElement('div'); dot.className='dot';
   const body = document.createElement('div'); body.className='body';
   const meta = document.createElement('div'); meta.className='meta';
@@ -291,7 +293,122 @@ function buildEntryElement(e){
   body.appendChild(text);
   el.appendChild(dot);
   el.appendChild(body);
+  // open edit modal on click
+  el.addEventListener('click', ()=> openEditModal(e));
   return el;
+}
+
+// --- Edit modal and editing helpers ---
+let _editingEntry = null;
+function createEditModal(){
+  if(document.getElementById('editModal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'editModal';
+  modal.className = 'modal hidden';
+  modal.innerHTML = `
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true">
+      <h3>エントリーを編集</h3>
+      <textarea id="editText" rows="6" placeholder="テキストを編集..." style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <input id="editDatetime" type="datetime-local" style="flex:1;padding:6px;border-radius:6px;border:1px solid #ddd">
+        <button id="calendarBtn" type="button">📅</button>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button id="editCancelBtn" type="button">キャンセル</button>
+        <button id="editSaveBtn" type="button" style="background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:6px">保存</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // handlers
+  modal.querySelector('.modal-backdrop').addEventListener('click', closeEditModal);
+  modal.querySelector('#editCancelBtn').addEventListener('click', closeEditModal);
+  modal.querySelector('#calendarBtn').addEventListener('click', ()=>{
+    const ip = document.getElementById('editDatetime');
+    if(ip) ip.focus();
+  });
+  modal.querySelector('#editSaveBtn').addEventListener('click', saveEditedEntry);
+}
+
+function openEditModal(entry){
+  createEditModal();
+  _editingEntry = entry;
+  const modal = document.getElementById('editModal');
+  const ta = modal.querySelector('#editText');
+  const dt = modal.querySelector('#editDatetime');
+  ta.value = entry.text || '';
+  // convert ISO ts to datetime-local value (local timezone)
+  const d = entry.ts ? new Date(entry.ts) : new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const toLocalDatetime = (date)=>{
+    const yyyy = date.getFullYear();
+    const mm = pad(date.getMonth()+1);
+    const dd = pad(date.getDate());
+    const hh = pad(date.getHours());
+    const min = pad(date.getMinutes());
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  };
+  dt.value = toLocalDatetime(d);
+  modal.classList.remove('hidden');
+  setTimeout(()=> ta.focus(), 50);
+}
+
+function closeEditModal(){
+  const modal = document.getElementById('editModal');
+  if(modal) modal.classList.add('hidden');
+  _editingEntry = null;
+}
+
+async function updateEntryInIDB(entry){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(['entries'], 'readwrite');
+    const store = tx.objectStore('entries');
+    store.put(entry);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function saveEditedEntry(){
+  if(!_editingEntry) return;
+  const modal = document.getElementById('editModal');
+  const ta = modal.querySelector('#editText');
+  const dt = modal.querySelector('#editDatetime');
+  let newText = ta.value.trim();
+  if(!newText) return alert('テキストを空にできません。');
+  const newTs = (dt.value) ? new Date(dt.value).toISOString() : new Date().toISOString();
+
+  const updated = Object.assign({}, _editingEntry, { text: newText, ts: newTs });
+
+  // If this appears to be a Firestore doc (string id) and user is signed in, update remote
+  if(currentUser && window._fb && window._fb.db && typeof updated.id === 'string'){
+    try{
+      await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').doc(updated.id).update({ text: updated.text, ts: updated.ts });
+      // rely on Firestore listener to update UI; still close modal
+      closeEditModal();
+      return;
+    }catch(err){
+      console.error('Failed to update remote entry', err);
+      alert('保存に失敗しました。' + (err && err.message ? err.message : ''));
+    }
+  }
+
+  // Otherwise, update local IDB (numeric id or offline)
+  try{
+    // Ensure numeric id remains numeric if present as string numeric
+    if(typeof updated.id === 'string' && /^\\?\d+$/.test(updated.id)){
+      updated.id = Number(updated.id);
+    }
+    await updateEntryInIDB(updated);
+    await render();
+    closeEditModal();
+  }catch(err){
+    console.error('Failed to update IDB entry', err);
+    alert('ローカル保存に失敗しました。' + (err && err.message ? err.message : ''));
+  }
 }
 
 let firestoreListenerUnsub = null;

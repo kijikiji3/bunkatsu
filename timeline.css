@@ -45,3 +45,16 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
   .app{padding-left:48px;padding-right:48px}
 }
 
+/* Modal / edit dialog styles */
+.modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:60}
+.modal.hidden{display:none}
+.modal .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.35)}
+.modal .modal-dialog{position:relative;z-index:61;background:var(--card);padding:16px;border-radius:10px;max-width:720px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,0.12)}
+.modal .modal-dialog h3{margin:0 0 8px 0}
+.modal .modal-dialog textarea{font-family:inherit}
+.modal .modal-dialog input[type="datetime-local"]{font-family:inherit}
+
+@media (max-width:600px){
+  .modal .modal-dialog{width:96%;padding:12px}
+}
+
