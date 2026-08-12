@@ -1,8 +1,10 @@
 // Autosize helper and app element references (no file attachments)
 const timeline = document.getElementById('timeline');
 const signInBtn = document.getElementById('signInBtn');
+const resetPosBtn = document.getElementById('resetPosBtn');
 const signOutBtn = document.getElementById('signOutBtn');
 const userInfo = document.getElementById('userInfo');
+let zIndexCounter = 1000;
 const STORAGE_KEY = 'timelineEntries_v1'; // legacy localStorage key (migrated)
 
 const CATEGORY_KEYS = ['c1','c2','c3'];
@@ -257,6 +259,120 @@ function initCategoryUI(titles){
     container.appendChild(col);
   }
   timeline.appendChild(container);
+
+  // Setup drag & drop positioning for desktop. JS computes pixel positions and enables dragging.
+  const applyInitialPositions = ()=>{
+    const cols = Array.from(container.querySelectorAll('.timeline-column'));
+    if(window.innerWidth < 900){
+      // revert to flow layout on small screens
+      cols.forEach(c=>{
+        c.style.position = '';
+        c.style.left = '';
+        c.style.top = '';
+        c.style.width = '';
+        c.style.zIndex = '';
+        c.classList.remove('draggable');
+      });
+      return;
+    }
+    const cw = Math.max(container.clientWidth, timeline.clientWidth);
+    const padding = 20;
+    const colWidth = Math.min(360, Math.max(240, Math.floor((cw - padding*4)/3)));
+    cols.forEach((col,i)=>{
+      col.style.width = colWidth + 'px';
+      let x = 0, y = 12;
+      if(i === 0){ x = Math.floor((cw - colWidth)/2); y = 12; }
+      else if(i === 1){ x = padding; y = 160; }
+      else if(i === 2){ x = Math.max(cw - colWidth - padding, padding); y = 160; }
+      else {
+        const idx = i - 3;
+        const perRow = Math.max(1, Math.floor(cw / (colWidth + padding)));
+        const row = Math.floor(idx / perRow);
+        const colPos = idx % perRow;
+        x = padding + colPos * (colWidth + padding);
+        y = 320 + row * 220;
+      }
+      col.style.position = 'absolute';
+      col.style.left = x + 'px';
+      col.style.top = y + 'px';
+      col.dataset.x = x; col.dataset.y = y;
+      col.classList.add('draggable');
+      col.style.zIndex = ++zIndexCounter;
+    });
+  };
+
+  applyInitialPositions();
+  window.addEventListener('resize', ()=>{ applyInitialPositions(); });
+  setupDrag(container);
+
+  // Reset positions button
+  if(typeof resetPosBtn !== 'undefined' && resetPosBtn){
+    resetPosBtn.addEventListener('click', ()=>{
+      const cols = Array.from(container.querySelectorAll('.timeline-column'));
+      const padding = 20;
+      const cw = Math.max(container.clientWidth, timeline.clientWidth);
+      const colWidth = cols[0] ? cols[0].clientWidth : 280;
+      cols.forEach((col,i)=>{
+        const x = padding + i * (colWidth + padding);
+        const y = 12;
+        col.style.position = 'absolute';
+        col.style.left = x + 'px';
+        col.style.top = y + 'px';
+        col.dataset.x = x; col.dataset.y = y;
+        col.style.zIndex = ++zIndexCounter;
+      });
+    });
+  }
+}
+
+// Drag support: attach event handlers to each column's header
+function setupDrag(container){
+  const cols = Array.from(container.querySelectorAll('.timeline-column'));
+  cols.forEach(col=>{
+    const handle = col.querySelector('.title-row') || col;
+    handle.style.touchAction = 'none';
+    handle.addEventListener('mousedown', startDrag);
+    handle.addEventListener('touchstart', startDrag, {passive:false});
+    // bring to front when clicked
+    col.addEventListener('mousedown', ()=> bringToFront(col));
+    function startDrag(e){
+      if(window.innerWidth < 900) return;
+      e.preventDefault();
+      bringToFront(col);
+      const isTouch = !!e.touches;
+      const startX = (isTouch ? e.touches[0].clientX : e.clientX);
+      const startY = (isTouch ? e.touches[0].clientY : e.clientY);
+      const containerRect = container.getBoundingClientRect();
+      const rect = col.getBoundingClientRect();
+      const origLeft = rect.left - containerRect.left;
+      const origTop = rect.top - containerRect.top;
+      function onMove(ev){
+        const mx = (ev.touches ? ev.touches[0].clientX : ev.clientX);
+        const my = (ev.touches ? ev.touches[0].clientY : ev.clientY);
+        const dx = mx - startX; const dy = my - startY;
+        let nx = origLeft + dx; let ny = origTop + dy;
+        nx = Math.max(0, Math.min(nx, container.clientWidth - rect.width));
+        ny = Math.max(0, Math.min(ny, container.clientHeight - rect.height));
+        col.style.left = nx + 'px'; col.style.top = ny + 'px';
+        col.dataset.x = nx; col.dataset.y = ny;
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.addEventListener('touchmove', onMove, {passive:false});
+      document.addEventListener('touchend', onUp);
+    }
+  });
+}
+
+function bringToFront(el){
+  if(!el) return;
+  el.style.zIndex = ++zIndexCounter;
 }
 
 function renderEntries(list){

@@ -13,9 +13,21 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 .composer{background:transparent;margin-bottom:12px}
 
 /* Three-column timeline layout */
-.timeline{display:block;margin-top:8px}
+.timeline{display:block;margin-top:8px;position:relative}
 .timeline-columns{display:flex;gap:24px;width:100%;align-items:flex-start}
 .timeline-column{flex:1;display:flex;flex-direction:column;gap:12px;min-width:0}
+
+/* Desktop: make columns absolute, draggable and free-floating (JS controls positions) */
+@media (min-width:900px){
+  .timeline{min-height:420px}
+  .timeline-columns{position:relative;padding:0;margin:0}
+  .timeline-column{position:absolute;background:var(--card);padding:12px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,0.04);cursor:grab}
+  .timeline-column:active{cursor:grabbing}
+  /* Default triangle positions for first three categories; JS will compute precise pixel positions on init */
+  .timeline-columns .timeline-column:nth-child(1){left:40%;top:12px}
+  .timeline-columns .timeline-column:nth-child(2){left:6%;top:160px}
+  .timeline-columns .timeline-column:nth-child(3){left:74%;top:160px}
+}
 .timeline-title{margin:0;padding:8px 10px;border-radius:8px;background:linear-gradient(90deg,rgba(79,70,229,.06),rgba(79,70,229,.03));font-size:16px;cursor:text;border:1px solid transparent}
 .timeline-title:focus{outline:2px solid rgba(79,70,229,.15)}
 
