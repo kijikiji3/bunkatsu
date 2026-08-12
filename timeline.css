@@ -37,7 +37,8 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 .no-entries{color:var(--muted);text-align:center;padding:24px}
 
 @media (max-width:900px){
-  .timeline-columns{flex-direction:column;gap:12px}
+  .timeline-columns{flex-direction:column;gap:12px;align-items:stretch}
+  .timeline-column{width:100%}
 }
 
 @media (min-width:1200px){
