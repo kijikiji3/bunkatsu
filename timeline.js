@@ -421,19 +421,83 @@ function exitSelectionMode(){
 async function deleteSelectedEntries(){
   if(selectedMap.size === 0) return;
   const entries = Array.from(selectedMap.values());
-  // Delete sequentially
+  const remoteDeletes = [];
+  const localCandidates = [];
   for(const ent of entries){
     if(currentUser && window._fb && window._fb.db && typeof ent.id === 'string'){
-      try{ await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').doc(ent.id).delete(); }catch(err){ console.warn('Failed delete remote', err); }
+      // remote doc id (Firestore)
+      remoteDeletes.push(ent.id);
     }else{
-      try{
-        // Prefer using stable keys / objects to delete precisely
-        await deleteEntryFromIDB(ent);
-      }catch(err){ console.warn('Failed delete local', err); }
+      localCandidates.push(ent);
     }
   }
+
+  // Perform local deletions in a single transaction to avoid intermediate inconsistent UI
+  if(localCandidates.length > 0){
+    try{
+      await deleteEntriesFromIDBBulk(localCandidates);
+    }catch(err){ console.warn('Failed bulk local delete', err); }
+  }
+
+  // Perform remote deletions in parallel (Firestore)
+  if(remoteDeletes.length > 0){
+    try{
+      const colRef = window._fb.db.collection('users').doc(currentUser.uid).collection('entries');
+      await Promise.all(remoteDeletes.map(id => colRef.doc(id).delete().catch(err=>{ console.warn('Failed remote delete', id, err); })));
+    }catch(err){ console.warn('Failed remote deletes', err); }
+  }
+
   exitSelectionMode();
   await render();
+}
+
+async function deleteEntriesFromIDBBulk(candidates){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(['entries','outbox'], 'readwrite');
+    const entriesStore = tx.objectStore('entries');
+    const outboxStore = tx.objectStore('outbox');
+
+    // gather numeric ids to delete and tmpKeys / ts-text matches
+    const numericIds = new Set();
+    const tmpKeys = new Set();
+    const tsTextList = [];
+    for(const c of candidates){
+      if(c.id !== undefined && c.id !== null && typeof c.id === 'number') numericIds.add(c.id);
+      else if(c.id !== undefined && c.id !== null && typeof c.id === 'string' && /^\d+$/.test(c.id)) numericIds.add(Number(c.id));
+      else if(c._tmpKey) tmpKeys.add(c._tmpKey);
+      else tsTextList.push({ ts: c.ts, text: c.text });
+    }
+
+    // Get all entries once, find matches for tmpKeys and ts/text
+    const allReq = entriesStore.getAll();
+    allReq.onsuccess = ()=>{
+      const all = allReq.result || [];
+      for(const e of all){
+        if(tmpKeys.size > 0 && e._tmpKey && tmpKeys.has(e._tmpKey)) numericIds.add(e.id);
+        for(const t of tsTextList){ if(e.ts === t.ts && e.text === t.text) numericIds.add(e.id); }
+      }
+
+      // Delete entries and corresponding outbox items
+      for(const id of Array.from(numericIds)){
+        try{ entriesStore.delete(id); }catch(e){/* ignore */}
+      }
+
+      // remove matching outbox items
+      const cursorReq = outboxStore.openCursor();
+      cursorReq.onsuccess = (ev)=>{
+        const cursor = ev.target.result;
+        if(cursor){
+          if(cursor.value && numericIds.has(cursor.value.entryId)) cursor.delete();
+          cursor.continue();
+        }
+      };
+    };
+    allReq.onerror = ()=>{/* ignore */};
+
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
 }
 
 function createEditModal(){
