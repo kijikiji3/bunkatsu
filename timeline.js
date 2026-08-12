@@ -221,51 +221,77 @@ function initCategoryUI(titles){
 }
 
 function renderEntries(list){
-  // list: array of entries with fields {id,text,ts,category,imageBlob}
+  // list: array of entries with fields {id,text,ts,category}
   // Clear column lists
   for(const k of CATEGORY_KEYS){
     const el = document.querySelector('.column-list[data-key="'+k+'"]');
     if(el) el.innerHTML = '';
   }
-  if(!list || list.length === 0){
+  // If no entries at all, show placeholder in first column
+  const totalCount = (list || []).length;
+  if(!list || totalCount === 0){
     const el = document.querySelector('.column-list[data-key="c1"]');
     if(el){
       const p = document.createElement('div');
       p.className = 'no-entries';
-      p.textContent = 'まだエントリーがありません。上の入力欄から追加できます。';
+      p.textContent = 'まだエントリーがありません。各カテゴリの下に入力欄があります。';
       el.appendChild(p);
     }
     return;
   }
-  for(const e of list){
-    const key = e.category || 'c1';
-    const parent = document.querySelector('.column-list[data-key="'+key+'"]');
+  // For each category, collect entries and render latest 3, with toggle for the rest
+  for(const k of CATEGORY_KEYS){
+    const parent = document.querySelector('.column-list[data-key="'+k+'"]');
     if(!parent) continue;
-    const el = document.createElement('article');
-    el.className = 'entry';
-    const dot = document.createElement('div'); dot.className='dot';
-    const body = document.createElement('div'); body.className='body';
-    const meta = document.createElement('div'); meta.className='meta';
-    meta.textContent = new Date(e.ts).toLocaleString();
-    const text = document.createElement('div'); text.className='text';
-    text.textContent = e.text || '';
-    body.appendChild(meta);
-    body.appendChild(text);
-    if(e.imageBlob){
-      const img = document.createElement('img');
-      try{
-        const url = URL.createObjectURL(e.imageBlob);
-        img.src = url;
-        img.onload = ()=> URL.revokeObjectURL(url);
-      }catch(err){
-        console.warn('Failed to create image URL', err);
-      }
-      body.appendChild(img);
+    const items = (list || []).filter(e => (e.category || 'c1') === k);
+    if(!items || items.length === 0){
+      const p = document.createElement('div');
+      p.className = 'no-entries';
+      p.textContent = '';
+      parent.appendChild(p);
+      continue;
     }
-    el.appendChild(dot);
-    el.appendChild(body);
-    parent.appendChild(el);
+    // show latest 3
+    const visible = items.slice(0,3);
+    const hidden = items.slice(3);
+    for(const e of visible){
+      const el = buildEntryElement(e);
+      parent.appendChild(el);
+    }
+    if(hidden.length > 0){
+      const extraContainer = document.createElement('div');
+      extraContainer.className = 'extra-entries';
+      for(const e of hidden){
+        const el = buildEntryElement(e);
+        extraContainer.appendChild(el);
+      }
+      parent.appendChild(extraContainer);
+      const btn = document.createElement('button');
+      btn.className = 'more-toggle';
+      btn.textContent = `他 ${hidden.length} 件を表示`;
+      btn.addEventListener('click', ()=>{
+        const open = extraContainer.classList.toggle('open');
+        btn.textContent = open ? '閉じる' : `他 ${hidden.length} 件を表示`;
+      });
+      parent.appendChild(btn);
+    }
   }
+}
+
+function buildEntryElement(e){
+  const el = document.createElement('article');
+  el.className = 'entry';
+  const dot = document.createElement('div'); dot.className='dot';
+  const body = document.createElement('div'); body.className='body';
+  const meta = document.createElement('div'); meta.className='meta';
+  meta.textContent = new Date(e.ts).toLocaleString();
+  const text = document.createElement('div'); text.className='text';
+  text.textContent = e.text || '';
+  body.appendChild(meta);
+  body.appendChild(text);
+  el.appendChild(dot);
+  el.appendChild(body);
+  return el;
 }
 
 let firestoreListenerUnsub = null;

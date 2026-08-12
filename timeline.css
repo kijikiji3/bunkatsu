@@ -6,7 +6,7 @@
 }
 *{box-sizing:border-box}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",sans-serif;margin:0;background:var(--bg);color:#111}
-.app{max-width:1100px;margin:24px auto;padding:16px}
+.app{max-width:none;width:100%;margin:0;padding:24px}
 .composer{background:transparent;margin-bottom:12px}
 .entry-form{background:var(--card);border-radius:10px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
 .input-row{display:flex;gap:12px;align-items:flex-start}
@@ -21,11 +21,18 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 
 /* Three-column timeline layout */
 .timeline{display:block;margin-top:8px}
-.timeline-columns{display:flex;gap:12px}
-.timeline-column{flex:1;display:flex;flex-direction:column;gap:8px}
+.timeline-columns{display:flex;gap:12px;width:100%}
+.timeline-column{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
 .timeline-title{margin:0;padding:8px 10px;border-radius:8px;background:linear-gradient(90deg,rgba(79,70,229,.06),rgba(79,70,229,.03));font-size:16px;cursor:text;border:1px solid transparent}
 .timeline-title:focus{outline:2px solid rgba(79,70,229,.15)}
-.column-list{display:flex;flex-direction:column;gap:8px;min-height:120px}
+.column-list{display:flex;flex-direction:column;gap:8px;min-height:120px;overflow:hidden}
+.column-form{background:transparent;padding:6px}
+.column-form .column-text{width:100%;border:1px solid #e6e9ef;padding:8px;border-radius:8px;resize:none;min-height:40px}
+.column-form .right-controls{display:flex;align-items:center;margin-top:6px}
+.column-form .sendBtn{background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:8px;cursor:pointer}
+.more-toggle{background:none;border:none;color:var(--accent);cursor:pointer;padding:6px 8px;font-size:14px}
+.extra-entries{display:none}
+.extra-entries.open{display:block}
 
 .entry{background:var(--card);padding:12px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.04);display:flex;gap:12px}
 .entry .dot{width:8px;height:8px;background:var(--accent);border-radius:50%;margin-top:6px}
