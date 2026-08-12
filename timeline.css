@@ -5,6 +5,45 @@
   --muted:#6b7280;
 }
 *{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",sans-serif;margin:0;background:var(--bg);color:#111}
+.app{max-width:1100px;margin:24px auto;padding:16px}
+.composer{background:transparent;margin-bottom:12px}
+.entry-form{background:var(--card);border-radius:10px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.input-row{display:flex;gap:12px;align-items:flex-start}
+.autosize{flex:1;resize:none;overflow:hidden;border:1px solid #e6e9ef;padding:10px;border-radius:8px;font-size:15px;line-height:1.4;min-height:40px}
+.right-controls{display:flex;flex-direction:column;gap:8px;align-items:center}
+#sendBtn{background:var(--accent);color:white;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+#sendBtn:active{transform:translateY(1px)}
+.file-label{cursor:pointer;padding:6px;border-radius:6px;border:1px dashed #d1d5db;font-size:18px}
+.file-label input{display:none}
+.preview{margin-top:8px}
+.preview img{max-height:120px;border-radius:8px;display:block}
+
+/* Three-column timeline layout */
+.timeline{display:block;margin-top:8px}
+.timeline-columns{display:flex;gap:12px}
+.timeline-column{flex:1;display:flex;flex-direction:column;gap:8px}
+.timeline-title{margin:0;padding:8px 10px;border-radius:8px;background:linear-gradient(90deg,rgba(79,70,229,.06),rgba(79,70,229,.03));font-size:16px;cursor:text;border:1px solid transparent}
+.timeline-title:focus{outline:2px solid rgba(79,70,229,.15)}
+.column-list{display:flex;flex-direction:column;gap:8px;min-height:120px}
+
+.entry{background:var(--card);padding:12px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.04);display:flex;gap:12px}
+.entry .dot{width:8px;height:8px;background:var(--accent);border-radius:50%;margin-top:6px}
+.entry .body{flex:1}
+.entry .meta{font-size:12px;color:var(--muted);margin-bottom:8px}
+.entry img{max-width:100%;border-radius:8px;margin-top:8px}
+.no-entries{color:var(--muted);text-align:center;padding:24px}
+
+@media (max-width:900px){
+  .timeline-columns{flex-direction:column}
+}
+
+  --bg:#f5f7fb;
+  --card:#ffffff;
+  --accent:#4f46e5;
+  --muted:#6b7280;
+}
+*{box-sizing:border-box}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,\"Hiragino Kaku Gothic ProN\",\"Noto Sans JP\",\"Yu Gothic UI\",sans-serif;margin:0;background:var(--bg);color:#111}
 .app{max-width:720px;margin:24px auto;padding:16px}
 .composer{background:transparent;margin-bottom:12px}
