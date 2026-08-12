@@ -268,7 +268,9 @@ form.addEventListener('submit', async (ev)=>{
       await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').add({ text: entry.text, ts: entry.ts });
     }catch(err){
       console.error('Failed to save to Firestore, falling back to IDB', err);
+      // Save locally and re-render so the entry appears immediately while outbox sync runs
       await addEntryToIDB(entry);
+      await render();
     }
   }else{
     try{
