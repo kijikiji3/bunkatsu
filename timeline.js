@@ -312,11 +312,11 @@ function buildEntryElement(e){
   let longPressTimer = null;
   let startX = 0, startY = 0;
   const startPress = (ev)=>{
-    // ignore if already in selection mode
     if(selectionMode) return;
     const p = ev.touches ? ev.touches[0] : ev;
     startX = p.clientX; startY = p.clientY;
     longPressTimer = setTimeout(()=>{
+      longPressTimer = null; // mark that long-press fired
       enterSelectionMode(e, el);
     }, 600);
   };
@@ -325,8 +325,15 @@ function buildEntryElement(e){
   el.addEventListener('mousedown', startPress);
   el.addEventListener('touchmove', (ev)=>{ if(!longPressTimer) return; const p = ev.touches[0]; if(Math.hypot(p.clientX-startX, p.clientY-startY) > 10) cancelPress(); }, {passive:true});
   el.addEventListener('mousemove', (ev)=>{ if(!longPressTimer) return; if(Math.hypot(ev.clientX-startX, ev.clientY-startY) > 10) cancelPress(); });
-  el.addEventListener('touchend', (ev)=>{ if(longPressTimer){ cancelPress(); return; } if(selectionMode){ toggleSelectElement(el); } });
-  el.addEventListener('mouseup', (ev)=>{ if(longPressTimer){ cancelPress(); return; } if(selectionMode){ toggleSelectElement(el); } else { openEditModal(e); } });
+  el.addEventListener('touchend', (ev)=>{
+    if(longPressTimer){ cancelPress(); }
+    if(selectionMode){ toggleSelectElement(el); }
+  }, {passive:true});
+  el.addEventListener('mouseup', (ev)=>{
+    if(longPressTimer){ cancelPress(); }
+    if(selectionMode){ toggleSelectElement(el); }
+    else { openEditModal(e); }
+  });
   // For accessibility: also handle simple click for keyboard users
   el.addEventListener('click', (ev)=>{ if(selectionMode) ev.preventDefault(); });
 
