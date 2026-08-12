@@ -186,6 +186,14 @@ function createColumnDOM(catKey){
   `;
   const textareaEl = form.querySelector('.column-text');
   textareaEl.addEventListener('input', ()=> autosize(textareaEl));
+  // Ctrl+Enter or Cmd+Enter to submit from the textarea
+  textareaEl.addEventListener('keydown', (ev)=>{
+    if((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter'){
+      ev.preventDefault();
+      if(typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.dispatchEvent(new Event('submit', {cancelable:true}));
+    }
+  });
   form.addEventListener('submit', async (ev)=>{
     ev.preventDefault();
     const txt = textareaEl.value.trim();
