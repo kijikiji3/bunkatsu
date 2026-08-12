@@ -281,8 +281,14 @@ function renderEntries(list){
 function buildEntryElement(e){
   const el = document.createElement('article');
   el.className = 'entry';
-  // expose id for optimistic updates and editing
-  if(e.id !== undefined) el.dataset.id = e.id;
+  // expose id and category for optimistic updates and editing
+  if(e.id !== undefined) el.dataset.id = String(e.id);
+  if(e.category) el.dataset.category = e.category;
+  const key = getEntryKey(e);
+  el.dataset.key = key;
+  // keep pointer to entry object for selection handlers
+  el._entryObject = e;
+
   const dot = document.createElement('div'); dot.className='dot';
   const body = document.createElement('div'); body.className='body';
   const meta = document.createElement('div'); meta.className='meta';
@@ -293,13 +299,140 @@ function buildEntryElement(e){
   body.appendChild(text);
   el.appendChild(dot);
   el.appendChild(body);
-  // open edit modal on click
-  el.addEventListener('click', ()=> openEditModal(e));
+
+  // Long-press / long-click support to enter selection mode
+  let longPressTimer = null;
+  let startX = 0, startY = 0;
+  const startPress = (ev)=>{
+    // ignore if already in selection mode
+    if(selectionMode) return;
+    const p = ev.touches ? ev.touches[0] : ev;
+    startX = p.clientX; startY = p.clientY;
+    longPressTimer = setTimeout(()=>{
+      enterSelectionMode(e, el);
+    }, 600);
+  };
+  const cancelPress = ()=>{ if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; } };
+  el.addEventListener('touchstart', startPress, {passive:true});
+  el.addEventListener('mousedown', startPress);
+  el.addEventListener('touchmove', (ev)=>{ if(!longPressTimer) return; const p = ev.touches[0]; if(Math.hypot(p.clientX-startX, p.clientY-startY) > 10) cancelPress(); }, {passive:true});
+  el.addEventListener('mousemove', (ev)=>{ if(!longPressTimer) return; if(Math.hypot(ev.clientX-startX, ev.clientY-startY) > 10) cancelPress(); });
+  el.addEventListener('touchend', (ev)=>{ if(longPressTimer){ cancelPress(); return; } if(selectionMode){ toggleSelectElement(el); } });
+  el.addEventListener('mouseup', (ev)=>{ if(longPressTimer){ cancelPress(); return; } if(selectionMode){ toggleSelectElement(el); } else { openEditModal(e); } });
+  // For accessibility: also handle simple click for keyboard users
+  el.addEventListener('click', (ev)=>{ if(selectionMode) ev.preventDefault(); });
+
   return el;
 }
 
-// --- Edit modal and editing helpers ---
+function toggleSelectElement(el){
+  if(!el || !el._entryObject) return;
+  const ent = el._entryObject;
+  if(selectionCategory && ent.category !== selectionCategory) return; // disallow cross-category
+  const key = getEntryKey(ent);
+  if(selectedMap.has(key)){
+    selectedMap.delete(key);
+    el.classList.remove('selected');
+  }else{
+    selectedMap.set(key, ent);
+    el.classList.add('selected');
+  }
+  updateSelectionBar();
+}
+
+// --- Edit modal, selection, and editing helpers ---
 let _editingEntry = null;
+let selectionMode = false;
+let selectionCategory = null;
+const selectedMap = new Map(); // key -> entry object
+
+function getEntryKey(e){
+  if(!e) return '';
+  if(e.id !== undefined && e.id !== null){
+    return (typeof e.id === 'string' ? 's:' : 'n:') + String(e.id);
+  }
+  return 't:' + (e.ts || '') + '::' + (e.text || '');
+}
+
+function createSelectionBar(){
+  if(document.getElementById('selectionBar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'selectionBar';
+  bar.className = 'selection-bar hidden';
+  bar.innerHTML = `
+    <div class="selection-inner">
+      <span id="selectionCount">選択 0 件</span>
+      <div class="selection-actions">
+        <button id="selectionCancelBtn" type="button">キャンセル</button>
+        <button id="selectionDeleteBtn" type="button" class="danger">削除</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(bar);
+  bar.querySelector('#selectionCancelBtn').addEventListener('click', ()=>{ exitSelectionMode(); });
+  bar.querySelector('#selectionDeleteBtn').addEventListener('click', ()=>{ deleteSelectedEntries(); });
+}
+
+function showSelectionBar(){
+  createSelectionBar();
+  const bar = document.getElementById('selectionBar');
+  if(bar) bar.classList.remove('hidden');
+  updateSelectionBar();
+}
+function hideSelectionBar(){
+  const bar = document.getElementById('selectionBar');
+  if(bar) bar.classList.add('hidden');
+}
+function updateSelectionBar(){
+  const cnt = selectedMap.size;
+  const el = document.getElementById('selectionCount');
+  if(el) el.textContent = `選択 ${cnt} 件`;
+}
+
+function enterSelectionMode(initialEntry, el){
+  selectionMode = true;
+  selectionCategory = initialEntry.category || 'c1';
+  selectedMap.clear();
+  // mark initial element
+  const key = getEntryKey(initialEntry);
+  selectedMap.set(key, initialEntry);
+  if(el) el.classList.add('selected');
+  showSelectionBar();
+}
+
+function exitSelectionMode(){
+  selectionMode = false;
+  selectionCategory = null;
+  selectedMap.clear();
+  document.querySelectorAll('.entry.selected').forEach(e=> e.classList.remove('selected'));
+  hideSelectionBar();
+}
+
+async function deleteSelectedEntries(){
+  if(selectedMap.size === 0) return;
+  const entries = Array.from(selectedMap.values());
+  // Delete sequentially
+  for(const ent of entries){
+    if(currentUser && window._fb && window._fb.db && typeof ent.id === 'string'){
+      try{ await window._fb.db.collection('users').doc(currentUser.uid).collection('entries').doc(ent.id).delete(); }catch(err){ console.warn('Failed delete remote', err); }
+    }else{
+      try{
+        const idNum = (typeof ent.id === 'number') ? ent.id : Number(ent.id);
+        if(Number.isFinite(idNum)){
+          await deleteEntryFromIDB(idNum);
+        }else{
+          // best-effort search-and-delete by ts/text
+          const all = await getAllEntriesFromIDB();
+          const found = all.find(e=> e.ts === ent.ts && e.text === ent.text);
+          if(found) await deleteEntryFromIDB(found.id);
+        }
+      }catch(err){ console.warn('Failed delete local', err); }
+    }
+  }
+  exitSelectionMode();
+  await render();
+}
+
 function createEditModal(){
   if(document.getElementById('editModal')) return;
   const modal = document.createElement('div');
