@@ -463,7 +463,10 @@ async function deleteSelectedEntries(){
   }
 
   exitSelectionMode();
-  await render();
+  // If we deleted remote docs, the Firestore listener will update the UI — avoid immediate local render to prevent transient mismatch.
+  if(remoteDeletes.length === 0){
+    await render();
+  }
 }
 
 async function deleteEntriesFromIDBBulk(candidates){
@@ -765,20 +768,24 @@ function showUser(u){
 }
 
 async function listenToUserEntries(uid){
-  if(!window._fb || !window._fb.db) return;
+  if(!window._fb || !window._fb.db) return Promise.resolve();
   if(firestoreListenerUnsub) firestoreListenerUnsub();
   const col = window._fb.db.collection('users').doc(uid).collection('entries').orderBy('ts','desc');
-  firestoreListenerUnsub = col.onSnapshot(snapshot=>{
-    const docs = snapshot.docs.map(d=>{
-      const data = d.data() || {};
-      // normalize category default
-      if(!data.category) data.category = 'c1';
-      return Object.assign({ id: d.id }, data);
+  let first = true;
+  return new Promise((resolve, reject)=>{
+    firestoreListenerUnsub = col.onSnapshot(snapshot=>{
+      const docs = snapshot.docs.map(d=>{
+        const data = d.data() || {};
+        if(!data.category) data.category = 'c1';
+        return Object.assign({ id: d.id }, data);
+      });
+      // Firestore stores plain text entries (no images in this app)
+      renderEntries(docs);
+      if(first){ first = false; resolve(); }
+    }, err=>{
+      console.error('Firestore listener error', err);
+      if(first){ first = false; reject(err); }
     });
-    // Firestore stores plain text entries (no images in this app)
-    renderEntries(docs);
-  }, err=>{
-    console.error('Firestore listener error', err);
   });
 }
 
@@ -819,12 +826,15 @@ if(window._fb && window._fb.auth){
       const remoteTitles = await loadCategoryTitlesFromFirestore(user.uid);
       if(remoteTitles){
         await saveCategoryTitlesToIDB(remoteTitles);
-        // Ensure UI updates with remote titles immediately
+      }
+      // flush local outbox to Firestore then listen to remote entries and wait for first snapshot before returning
+      await flushOutboxToFirestore(user.uid);
+      try{
+        await listenToUserEntries(user.uid);
+      }catch(err){
+        console.warn('Listening to Firestore entries failed, falling back to local render', err);
         await render();
       }
-      // flush local outbox to Firestore then listen to remote entries
-      await flushOutboxToFirestore(user.uid);
-      listenToUserEntries(user.uid);
     }else{
       // stop listening and render local IDB
       if(firestoreListenerUnsub) firestoreListenerUnsub();
