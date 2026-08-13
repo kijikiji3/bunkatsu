@@ -12,10 +12,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic
 .app{max-width:none;width:100%;margin:0;padding:24px}
 .composer{background:transparent;margin-bottom:12px}
 .auth-toolbar{position:relative;z-index:2000;display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
-.auth-button,.category-action{height:32px;border:0;border-radius:6px;background:#e2e8f0;color:#334155;font:inherit;font-size:14px;line-height:1;cursor:pointer}
-.auth-button{padding:0 10px}
-.auth-button:hover,.category-action:hover{background:#cbd5e1}
-.user-info{padding:6px 10px;border-radius:6px;background:#f1f5f9;color:#475569;font-size:14px}
+.app-menu{position:relative}
+.menu-button{width:32px;height:32px;border:0;background:transparent;color:#334155;font:inherit;font-size:22px;line-height:1;cursor:pointer}
+.menu-button:hover,.menu-button[aria-expanded="true"]{background:#e2e8f0}
+.menu-panel{position:absolute;top:calc(100% + 4px);left:0;z-index:2001;min-width:180px;padding:4px 0;background:var(--card);border:1px solid #e2e8f0;box-shadow:0 8px 20px rgba(2,6,23,.12)}
+.menu-item{display:block;width:100%;border:0;background:transparent;color:#334155;padding:9px 12px;text-align:left;font:inherit;font-size:14px;cursor:pointer}
+.menu-item:hover{background:#f1f5f9}
+.menu-user-info{display:block;border-top:1px solid #e2e8f0;padding:8px 12px;color:#64748b;font-size:12px;overflow-wrap:anywhere}
+.category-action{height:32px;border:0;border-radius:6px;background:#e2e8f0;color:#334155;font:inherit;font-size:14px;line-height:1;cursor:pointer}
+.category-action:hover{background:#cbd5e1}
 .progress-tools{display:flex;gap:6px;margin-inline:auto}
 .progress-action{width:32px;height:32px;border:0;border-radius:6px;background:#dbeafe;color:#2563eb;font-size:22px;line-height:1;cursor:grab}
 .progress-action:active{cursor:grabbing;background:#bfdbfe}

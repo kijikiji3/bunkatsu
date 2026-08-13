@@ -1,11 +1,14 @@
 // Autosize helper and app element references (no file attachments)
 const timeline = document.getElementById('timeline');
+const menuBtn = document.getElementById('menuBtn');
+const appMenu = document.getElementById('appMenu');
 const signInBtn = document.getElementById('signInBtn');
 const addCategoryBtn = document.getElementById('addCategoryBtn');
 const categoryTrashBtn = document.getElementById('categoryTrashBtn');
 const progressAddBtn = document.getElementById('progressAddBtn');
 const progressRemoveBtn = document.getElementById('progressRemoveBtn');
 const resetPosBtn = document.getElementById('resetPosBtn');
+const downloadBtn = document.getElementById('downloadBtn');
 const signOutBtn = document.getElementById('signOutBtn');
 const userInfo = document.getElementById('userInfo');
 let zIndexCounter = 1000;
@@ -22,6 +25,7 @@ const DEFAULT_CATEGORIES = Object.entries(DEFAULT_TITLES).map(([id, title])=>({
 let categories = [];
 let lastEntries = [];
 let categoryResizeHandler = null;
+const POS_KEY = 'timeline_column_positions_v1';
 
 function autosize(el){
   el.style.height = 'auto';
@@ -124,6 +128,51 @@ function getProgressPercent(value){
   const match = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(value || '');
   if(!match || Number(match[2]) === 0) return 0;
   return Math.max(0, Math.min(100, (Number(match[1]) / Number(match[2])) * 100));
+}
+
+function closeMenu(){
+  appMenu.hidden = true;
+  menuBtn.setAttribute('aria-expanded', 'false');
+}
+
+function resetPositions(){
+  localStorage.removeItem(POS_KEY);
+  initCategoryUI();
+  renderEntries(lastEntries);
+  closeMenu();
+}
+
+function csvCell(value){
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadEntriesCsv(){
+  const categoryById = new Map(categories.map(category=> [category.id, category]));
+  const rows = lastEntries.map(entry=>{
+    const category = categoryById.get(entry.category || 'c1');
+    return [
+      category && category.deletedAt ? 'ゴミ箱' : '表示中',
+      category ? category.title : '',
+      category && category.progress !== null ? category.progress : '',
+      entry.ts || '',
+      entry.text || '',
+    ];
+  });
+  const csv = [
+    ['表示中orゴミ箱', 'カテゴリ名', 'プログレスバーの分数', 'エントリの日時', 'エントリの文字列'],
+    ...rows,
+  ].map(row=> row.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `分割日記-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  closeMenu();
 }
 
 function openCategoryTrash(){
@@ -537,8 +586,6 @@ function initCategoryUI(){
   timeline.appendChild(container);
 
   // Setup drag & drop positioning for desktop. JS computes pixel positions and enables dragging.
-  const POS_KEY = 'timeline_column_positions_v1';
-
   const savePositions = ()=>{
     try{
       const cols = Array.from(container.querySelectorAll('.timeline-column'));
@@ -562,8 +609,6 @@ function initCategoryUI(){
       return JSON.parse(raw);
     }catch(e){ return null; }
   };
-
-  const clearPositions = ()=>{ localStorage.removeItem(POS_KEY); };
 
   const applyInitialPositions = ()=>{
     const cols = Array.from(container.querySelectorAll('.timeline-column'));
@@ -637,26 +682,6 @@ function initCategoryUI(){
   window.addEventListener('resize', categoryResizeHandler);
   setupDrag(container, savePositions);
 
-  // Reset positions button
-  if(typeof resetPosBtn !== 'undefined' && resetPosBtn){
-    resetPosBtn.addEventListener('click', ()=>{
-      const cols = Array.from(container.querySelectorAll('.timeline-column'));
-      const padding = 20;
-      const cw = Math.max(container.clientWidth, timeline.clientWidth);
-      const colWidth = cols[0] ? cols[0].clientWidth : 280;
-      cols.forEach((col,i)=>{
-        const x = padding + i * (colWidth + padding);
-        const y = 12;
-        col.style.position = 'absolute';
-        col.style.left = x + 'px';
-        col.style.top = y + 'px';
-        col.dataset.x = x; col.dataset.y = y;
-        col.style.zIndex = ++zIndexCounter;
-      });
-      // clear saved positions
-      clearPositions();
-    });
-  }
 }
 
 // Drag support: attach event handlers to each column's header
@@ -1311,12 +1336,12 @@ async function listenToCategories(uid){
 
 function showUser(u){
   if(u){
-    signInBtn.style.display = 'none';
-    signOutBtn.style.display = '';
+    signInBtn.hidden = true;
+    signOutBtn.hidden = false;
     userInfo.textContent = u.displayName || u.email || u.uid;
   }else{
-    signInBtn.style.display = '';
-    signOutBtn.style.display = 'none';
+    signInBtn.hidden = false;
+    signOutBtn.hidden = true;
     userInfo.textContent = '';
   }
 }
@@ -1415,6 +1440,19 @@ if(window._fb && window._fb.auth){
   });
 }
 
+menuBtn.addEventListener('click', ()=>{
+  const isOpen = !appMenu.hidden;
+  appMenu.hidden = isOpen;
+  menuBtn.setAttribute('aria-expanded', String(!isOpen));
+});
+document.addEventListener('click', event=>{
+  if(!event.target.closest('.app-menu')) closeMenu();
+});
+document.addEventListener('keydown', event=>{
+  if(event.key === 'Escape') closeMenu();
+});
+resetPosBtn.addEventListener('click', resetPositions);
+downloadBtn.addEventListener('click', downloadEntriesCsv);
 addCategoryBtn.addEventListener('click', addCategory);
 categoryTrashBtn.addEventListener('click', openCategoryTrash);
 [

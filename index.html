@@ -11,7 +11,16 @@
   <main class="app">
     <header class="composer">
       <div id="auth" class="auth-toolbar">
-        <button id="signInBtn" class="auth-button" type="button">Googleでサインイン</button>
+        <div class="app-menu">
+          <button id="menuBtn" class="menu-button" type="button" aria-label="メニューを開く" aria-expanded="false" aria-controls="appMenu">☰</button>
+          <div id="appMenu" class="menu-panel" hidden>
+            <button id="resetPosBtn" class="menu-item" type="button">初期位置に戻す</button>
+            <button id="downloadBtn" class="menu-item" type="button">ダウンロード</button>
+            <button id="signInBtn" class="menu-item" type="button">Googleでサインイン</button>
+            <button id="signOutBtn" class="menu-item" type="button" hidden>サインアウト</button>
+            <span id="userInfo" class="menu-user-info" aria-live="polite"></span>
+          </div>
+        </div>
         <button id="addCategoryBtn" class="category-action" type="button" aria-label="カテゴリを追加" title="カテゴリを追加">＋</button>
         <button id="categoryTrashBtn" class="category-action" type="button" aria-label="カテゴリのゴミ箱" title="カテゴリのゴミ箱">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 11H7L6 9Zm4 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z"/></svg>
@@ -20,9 +29,6 @@
           <button id="progressAddBtn" class="progress-action" type="button" draggable="true" aria-label="進捗表示を追加" title="カードへドラッグして進捗表示を追加">＋</button>
           <button id="progressRemoveBtn" class="progress-action" type="button" draggable="true" aria-label="進捗表示を削除" title="カードへドラッグして進捗表示を削除">−</button>
         </div>
-        <button id="resetPosBtn" class="auth-button" type="button">初期位置に戻す</button>
-        <button id="signOutBtn" class="auth-button" type="button" style="display:none">サインアウト</button>
-        <span id="userInfo" class="user-info" aria-live="polite"></span>
       </div>
 
     </header>
