@@ -3,6 +3,8 @@ const timeline = document.getElementById('timeline');
 const signInBtn = document.getElementById('signInBtn');
 const addCategoryBtn = document.getElementById('addCategoryBtn');
 const categoryTrashBtn = document.getElementById('categoryTrashBtn');
+const progressAddBtn = document.getElementById('progressAddBtn');
+const progressRemoveBtn = document.getElementById('progressRemoveBtn');
 const resetPosBtn = document.getElementById('resetPosBtn');
 const signOutBtn = document.getElementById('signOutBtn');
 const userInfo = document.getElementById('userInfo');
@@ -15,6 +17,7 @@ const DEFAULT_CATEGORIES = Object.entries(DEFAULT_TITLES).map(([id, title])=>({
   id,
   title,
   buttonColor: CATEGORY_COLORS[0],
+  progress: null,
 }));
 let categories = [];
 let lastEntries = [];
@@ -34,6 +37,7 @@ async function addCategory(){
     id: createCategoryId(),
     title: `カテゴリ${categories.filter(item=> !item.deletedAt).length + 1}`,
     buttonColor: CATEGORY_COLORS[0],
+    progress: null,
   };
   categories.push(category);
   try{
@@ -101,6 +105,25 @@ async function permanentlyDeleteCategory(category){
     console.error('Failed to permanently delete category', err);
     alert('カテゴリを完全削除できませんでした。');
   }
+}
+
+async function moveCategoryToTrash(category){
+  category.deletedAt = new Date().toISOString();
+  try{
+    await persistCategories();
+    initCategoryUI();
+    renderEntries(lastEntries);
+  }catch(err){
+    category.deletedAt = null;
+    console.error('Failed to move category to trash', err);
+    alert('カテゴリをゴミ箱へ移動できませんでした。');
+  }
+}
+
+function getProgressPercent(value){
+  const match = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(value || '');
+  if(!match || Number(match[2]) === 0) return 0;
+  return Math.max(0, Math.min(100, (Number(match[1]) / Number(match[2])) * 100));
 }
 
 function openCategoryTrash(){
@@ -235,6 +258,7 @@ function normalizeCategories(value){
       title: category.title || 'カテゴリ',
       buttonColor: category.buttonColor || CATEGORY_COLORS[0],
       deletedAt: category.deletedAt || null,
+      progress: typeof category.progress === 'string' ? category.progress : null,
     })).filter(category=> category.id);
   }
   if(value && typeof value === 'object'){
@@ -333,6 +357,7 @@ function createColumnDOM(category){
   const col = document.createElement('div');
   col.className = 'timeline-column';
   col.dataset.key = catKey;
+  col._category = category;
   col.style.setProperty('--category-button', category.buttonColor);
   const headerRow = document.createElement('div');
   headerRow.className = 'title-row';
@@ -393,30 +418,63 @@ function createColumnDOM(category){
     confirmBtn.style.display = 'none';
   });
 
-  const deleteButton = document.createElement('button');
-  deleteButton.className = 'category-delete';
-  deleteButton.type = 'button';
-  deleteButton.setAttribute('aria-label', 'カテゴリをゴミ箱へ移動');
-  deleteButton.title = 'カテゴリをゴミ箱へ移動';
-  deleteButton.textContent = '🗑';
-  deleteButton.addEventListener('click', async ()=>{
-    category.deletedAt = new Date().toISOString();
+  headerRow.appendChild(dragHandle);
+  headerRow.appendChild(header);
+  headerRow.appendChild(confirmBtn);
+  col.appendChild(headerRow);
+
+  const progress = document.createElement('div');
+  progress.className = 'category-progress';
+  const progressInput = document.createElement('input');
+  progressInput.className = 'progress-value';
+  progressInput.type = 'text';
+  progressInput.inputMode = 'text';
+  progressInput.setAttribute('aria-label', '進捗');
+  const progressBar = document.createElement('div');
+  progressBar.className = 'progress-bar';
+  const progressFill = document.createElement('div');
+  progressFill.className = 'progress-fill';
+  progressBar.appendChild(progressFill);
+  const updateProgress = ()=>{
+    progressInput.value = category.progress || '';
+    progressFill.style.width = `${getProgressPercent(category.progress)}%`;
+  };
+  progressInput.addEventListener('input', ()=>{
+    progressFill.style.width = `${getProgressPercent(progressInput.value)}%`;
+  });
+  progressInput.addEventListener('change', async ()=>{
+    category.progress = progressInput.value;
+    progressFill.style.width = `${getProgressPercent(category.progress)}%`;
+    try{ await persistCategories(); }catch(err){ console.error('Failed to save progress', err); }
+  });
+  progress.append(progressInput, progressBar);
+  if(category.progress !== null) col.appendChild(progress);
+  updateProgress();
+
+  col.addEventListener('dragover', event=>{
+    if(Array.from(event.dataTransfer.types).includes('text/plain')){
+      event.preventDefault();
+      col.classList.add('progress-drop-target');
+    }
+  });
+  col.addEventListener('dragleave', ()=> col.classList.remove('progress-drop-target'));
+  col.addEventListener('drop', async event=>{
+    const operation = event.dataTransfer.getData('text/plain');
+    col.classList.remove('progress-drop-target');
+    if(operation !== 'progress-add' && operation !== 'progress-remove') return;
+    event.preventDefault();
+    if(operation === 'progress-remove' && category.progress === null) return;
+    if(operation === 'progress-add') category.progress = category.progress === null ? '0/100' : category.progress;
+    if(operation === 'progress-remove') category.progress = null;
     try{
       await persistCategories();
       initCategoryUI();
       renderEntries(lastEntries);
     }catch(err){
-      category.deletedAt = null;
-      console.error('Failed to move category to trash', err);
-      alert('カテゴリをゴミ箱へ移動できませんでした。');
+      console.error('Failed to update progress display', err);
+      alert('進捗表示を変更できませんでした。');
     }
   });
-
-  headerRow.appendChild(dragHandle);
-  headerRow.appendChild(header);
-  headerRow.appendChild(confirmBtn);
-  headerRow.appendChild(deleteButton);
-  col.appendChild(headerRow);
 
   // per-category input form (textarea + send button)
   const form = document.createElement('form');
@@ -630,6 +688,11 @@ function setupDrag(container, savePositions){
         const dx = mx - startX; const dy = my - startY;
         if(Math.hypot(dx, dy) > 5) moved = true;
         let nx = origLeft + dx; let ny = origTop + dy;
+        const trashRect = categoryTrashBtn.getBoundingClientRect();
+        categoryTrashBtn.classList.toggle(
+          'trash-drop-target',
+          mx >= trashRect.left && mx <= trashRect.right && my >= trashRect.top && my <= trashRect.bottom,
+        );
         // allow overlapping beyond container bounds a bit
         // Use containerRect (bounding box) and window height as fallback — container.clientHeight can be 0 for absolutely positioned columns
         const maxX = containerRect.width - rect.width + 200;
@@ -639,11 +702,21 @@ function setupDrag(container, savePositions){
         col.style.left = nx + 'px'; col.style.top = ny + 'px';
         col.dataset.x = nx; col.dataset.y = ny;
       }
-      function onUp(){
+      function onUp(event){
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.removeEventListener('touchmove', onMove);
         document.removeEventListener('touchend', onUp);
+        categoryTrashBtn.classList.remove('trash-drop-target');
+        const point = event.changedTouches ? event.changedTouches[0] : event;
+        const trashRect = categoryTrashBtn.getBoundingClientRect();
+        const droppedOnTrash = moved
+          && point.clientX >= trashRect.left && point.clientX <= trashRect.right
+          && point.clientY >= trashRect.top && point.clientY <= trashRect.bottom;
+        if(droppedOnTrash && col._category){
+          moveCategoryToTrash(col._category);
+          return;
+        }
         savePositions();
         if(!moved && handle._cycleCategoryColor) handle._cycleCategoryColor();
       }
@@ -1344,6 +1417,15 @@ if(window._fb && window._fb.auth){
 
 addCategoryBtn.addEventListener('click', addCategory);
 categoryTrashBtn.addEventListener('click', openCategoryTrash);
+[
+  [progressAddBtn, 'progress-add'],
+  [progressRemoveBtn, 'progress-remove'],
+].forEach(([button, operation])=>{
+  button.addEventListener('dragstart', event=>{
+    event.dataTransfer.setData('text/plain', operation);
+    event.dataTransfer.effectAllowed = 'copy';
+  });
+});
 
 // initial render (if not authenticated yet)
 render();
