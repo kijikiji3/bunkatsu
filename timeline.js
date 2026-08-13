@@ -1,18 +1,167 @@
 // Autosize helper and app element references (no file attachments)
 const timeline = document.getElementById('timeline');
 const signInBtn = document.getElementById('signInBtn');
+const addCategoryBtn = document.getElementById('addCategoryBtn');
+const categoryTrashBtn = document.getElementById('categoryTrashBtn');
 const resetPosBtn = document.getElementById('resetPosBtn');
 const signOutBtn = document.getElementById('signOutBtn');
 const userInfo = document.getElementById('userInfo');
 let zIndexCounter = 1000;
 const STORAGE_KEY = 'timelineEntries_v1'; // legacy localStorage key (migrated)
 
-const CATEGORY_KEYS = ['c1','c2','c3'];
 const DEFAULT_TITLES = { c1: 'カテゴリ1', c2: 'カテゴリ2', c3: 'カテゴリ3' };
+const CATEGORY_COLORS = ['#2563eb', '#1d4ed8', '#0f4c81', '#475569', '#334155', '#64748b'];
+const DEFAULT_CATEGORIES = Object.entries(DEFAULT_TITLES).map(([id, title])=>({
+  id,
+  title,
+  buttonColor: CATEGORY_COLORS[0],
+}));
+let categories = [];
+let lastEntries = [];
+let categoryResizeHandler = null;
 
 function autosize(el){
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
+}
+
+function createCategoryId(){
+  return `category-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function addCategory(){
+  const category = {
+    id: createCategoryId(),
+    title: `カテゴリ${categories.filter(item=> !item.deletedAt).length + 1}`,
+    buttonColor: CATEGORY_COLORS[0],
+  };
+  categories.push(category);
+  try{
+    await persistCategories();
+    initCategoryUI();
+    renderEntries(lastEntries);
+  }catch(err){
+    categories = categories.filter(item=> item !== category);
+    console.error('Failed to add category', err);
+    alert('カテゴリを追加できませんでした。');
+  }
+}
+
+async function permanentlyDeleteCategoryFromIDB(categoryId, nextCategories){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(['categories', 'entries', 'outbox'], 'readwrite');
+    tx.objectStore('categories').put({ id: 'cats', categories: nextCategories });
+    const entries = tx.objectStore('entries');
+    const outbox = tx.objectStore('outbox');
+    const entryCursor = entries.openCursor();
+    entryCursor.onsuccess = event=>{
+      const cursor = event.target.result;
+      if(cursor){
+        if((cursor.value.category || 'c1') === categoryId) cursor.delete();
+        cursor.continue();
+      }
+    };
+    const outboxCursor = outbox.openCursor();
+    outboxCursor.onsuccess = event=>{
+      const cursor = event.target.result;
+      if(cursor){
+        if((cursor.value.category || 'c1') === categoryId) cursor.delete();
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function permanentlyDeleteCategoryFromFirestore(categoryId, nextCategories){
+  if(!currentUser || !window._fb || !window._fb.db) return;
+  const db = window._fb.db;
+  const entries = await db.collection('users').doc(currentUser.uid).collection('entries')
+    .where('category', '==', categoryId).get();
+  const docs = entries.docs;
+  for(let index = 0; index < docs.length; index += 500){
+    const batch = db.batch();
+    docs.slice(index, index + 500).forEach(doc=> batch.delete(doc.ref));
+    await batch.commit();
+  }
+  await db.collection('users').doc(currentUser.uid).set({ categories: nextCategories }, { merge: true });
+}
+
+async function permanentlyDeleteCategory(category){
+  const nextCategories = categories.filter(item=> item.id !== category.id);
+  try{
+    await permanentlyDeleteCategoryFromFirestore(category.id, nextCategories);
+    await permanentlyDeleteCategoryFromIDB(category.id, nextCategories);
+    categories = nextCategories;
+    initCategoryUI();
+    renderEntries(lastEntries.filter(entry=> entry.category !== category.id));
+  }catch(err){
+    console.error('Failed to permanently delete category', err);
+    alert('カテゴリを完全削除できませんでした。');
+  }
+}
+
+function openCategoryTrash(){
+  const trashed = categories.filter(category=> category.deletedAt);
+  const dialog = document.createElement('div');
+  dialog.className = 'modal';
+  dialog.innerHTML = `
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog category-trash-dialog" role="dialog" aria-modal="true">
+      <h3>カテゴリのゴミ箱</h3>
+      <div class="category-trash-list"></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button type="button" class="close-trash">閉じる</button>
+      </div>
+    </div>
+  `;
+  const close = ()=>{
+    dialog.remove();
+    document.body.classList.remove('modal-open');
+  };
+  dialog.querySelector('.modal-backdrop').addEventListener('click', close);
+  dialog.querySelector('.close-trash').addEventListener('click', close);
+  const list = dialog.querySelector('.category-trash-list');
+  if(trashed.length === 0){
+    list.textContent = 'ゴミ箱は空です。';
+  }else{
+    trashed.forEach(category=>{
+      const item = document.createElement('div');
+      item.className = 'category-trash-item';
+      const title = document.createElement('span');
+      title.textContent = category.title;
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.textContent = '復元';
+      restore.addEventListener('click', async ()=>{
+        category.deletedAt = null;
+        try{
+          await persistCategories();
+          close();
+          initCategoryUI();
+          renderEntries(lastEntries);
+        }catch(err){
+          category.deletedAt = new Date().toISOString();
+          console.error('Failed to restore category', err);
+          alert('カテゴリを復元できませんでした。');
+        }
+      });
+      const permanentlyDelete = document.createElement('button');
+      permanentlyDelete.type = 'button';
+      permanentlyDelete.className = 'category-permanent-delete';
+      permanentlyDelete.textContent = '完全削除';
+      permanentlyDelete.addEventListener('click', async ()=>{
+        await permanentlyDeleteCategory(category);
+        if(!categories.some(item=> item.id === category.id)) close();
+      });
+      item.append(title, restore, permanentlyDelete);
+      list.appendChild(item);
+    });
+  }
+  document.body.appendChild(dialog);
+  document.body.classList.add('modal-open');
 }
 
 // IndexedDB helpers
@@ -29,8 +178,7 @@ function openDB(){
       }
       if(!db.objectStoreNames.contains('categories')){
         const s = db.createObjectStore('categories', { keyPath: 'id' });
-        // seed default titles
-        s.add({ id: 'cats', titles: DEFAULT_TITLES });
+        s.add({ id: 'cats', categories: DEFAULT_CATEGORIES });
       }
     };
     req.onsuccess = ()=> resolve(req.result);
@@ -80,25 +228,45 @@ async function getAllEntriesFromIDB(){
   });
 }
 
-async function getCategoryTitlesFromIDB(){
+function normalizeCategories(value){
+  if(Array.isArray(value)){
+    return value.map(category=>({
+      id: category.id,
+      title: category.title || 'カテゴリ',
+      buttonColor: category.buttonColor || CATEGORY_COLORS[0],
+      deletedAt: category.deletedAt || null,
+    })).filter(category=> category.id);
+  }
+  if(value && typeof value === 'object'){
+    return Object.entries(value).map(([id, title])=>({
+      id,
+      title: title || DEFAULT_TITLES[id] || 'カテゴリ',
+      buttonColor: CATEGORY_COLORS[0],
+    }));
+  }
+  return DEFAULT_CATEGORIES.map(category=> ({ ...category }));
+}
+
+async function getCategoriesFromIDB(){
   const db = await openDB();
   return new Promise((resolve, reject)=>{
     const tx = db.transaction('categories', 'readonly');
     const store = tx.objectStore('categories');
     const req = store.get('cats');
     req.onsuccess = ()=>{
-      resolve((req.result && req.result.titles) ? req.result.titles : DEFAULT_TITLES);
+      const record = req.result;
+      resolve(normalizeCategories(record && (record.categories || record.titles)));
     };
     req.onerror = ()=> reject(req.error);
   });
 }
 
-async function saveCategoryTitlesToIDB(titles){
+async function saveCategoriesToIDB(nextCategories){
   const db = await openDB();
   return new Promise((resolve, reject)=>{
     const tx = db.transaction('categories', 'readwrite');
     const store = tx.objectStore('categories');
-    store.put({ id: 'cats', titles });
+    store.put({ id: 'cats', categories: nextCategories });
     tx.oncomplete = ()=> resolve();
     tx.onerror = ()=> reject(tx.error);
   });
@@ -153,9 +321,19 @@ async function migrateLocalStorageToIDB(){
 
 
 
-function createColumnDOM(catKey){
+async function persistCategories(){
+  await saveCategoriesToIDB(categories);
+  if(currentUser && window._fb && window._fb.db){
+    await window._fb.db.collection('users').doc(currentUser.uid).set({ categories }, { merge: true });
+  }
+}
+
+function createColumnDOM(category){
+  const catKey = category.id;
   const col = document.createElement('div');
   col.className = 'timeline-column';
+  col.dataset.key = catKey;
+  col.style.setProperty('--category-button', category.buttonColor);
   const headerRow = document.createElement('div');
   headerRow.className = 'title-row';
 
@@ -165,12 +343,31 @@ function createColumnDOM(catKey){
   header.contentEditable = 'true';
   header.spellcheck = false;
 
-  // Drag handle (left of title) to avoid interfering with title editing
+  // Tap to cycle colors; drag to reposition the card.
   const dragHandle = document.createElement('div');
   dragHandle.className = 'drag-handle';
-  dragHandle.setAttribute('aria-label', 'ドラッグして移動');
-  dragHandle.title = 'ドラッグして移動';
+  dragHandle.setAttribute('aria-label', 'タップで色を変更、ドラッグして移動');
+  dragHandle.title = 'タップで色を変更、ドラッグして移動';
+  dragHandle.tabIndex = 0;
   dragHandle.innerHTML = '\u2630'; // simple hamburger glyph
+  const cycleColor = async ()=>{
+    const currentIndex = CATEGORY_COLORS.indexOf(category.buttonColor);
+    category.buttonColor = CATEGORY_COLORS[(currentIndex + 1) % CATEGORY_COLORS.length];
+    col.style.setProperty('--category-button', category.buttonColor);
+    try{
+      await persistCategories();
+    }catch(err){
+      console.error('Failed to save category color', err);
+      alert('カテゴリの色を保存できませんでした。');
+    }
+  };
+  dragHandle._cycleCategoryColor = cycleColor;
+  dragHandle.addEventListener('keydown', event=>{
+    if(event.key === 'Enter' || event.key === ' '){
+      event.preventDefault();
+      cycleColor();
+    }
+  });
 
   // Confirm button to explicitly save title changes
   const confirmBtn = document.createElement('button');
@@ -186,27 +383,39 @@ function createColumnDOM(catKey){
   header.addEventListener('blur', ()=>{ setTimeout(()=>{ if(document.activeElement !== confirmBtn) confirmBtn.style.display = 'none'; }, 200); });
 
   confirmBtn.addEventListener('click', async ()=>{
-    const newTitle = header.textContent.trim() || DEFAULT_TITLES[catKey];
+    const newTitle = header.textContent.trim() || category.title;
     header.textContent = newTitle;
-    // save locally
     try{
-      const titles = await getCategoryTitlesFromIDB();
-      titles[catKey] = newTitle;
-      await saveCategoryTitlesToIDB(titles);
+      const current = categories.find(item=> item.id === catKey);
+      if(current) current.title = newTitle;
+      await persistCategories();
     }catch(err){ console.warn('Failed to save category titles to IDB', err); }
-    // save to Firestore (if signed in)
-    if(currentUser && window._fb && window._fb.db){
-      try{
-        await window._fb.db.collection('users').doc(currentUser.uid).set({ categories: await getCategoryTitlesFromIDB() }, { merge: true });
-      }catch(err){ console.warn('Failed to sync category titles to Firestore', err); alert('Firebaseへの保存に失敗しました: ' + (err && err.message ? err.message : '')); }
-    }
     confirmBtn.style.display = 'none';
   });
 
-  // insert drag handle before header so user drags handle, not title
+  const deleteButton = document.createElement('button');
+  deleteButton.className = 'category-delete';
+  deleteButton.type = 'button';
+  deleteButton.setAttribute('aria-label', 'カテゴリをゴミ箱へ移動');
+  deleteButton.title = 'カテゴリをゴミ箱へ移動';
+  deleteButton.textContent = '🗑';
+  deleteButton.addEventListener('click', async ()=>{
+    category.deletedAt = new Date().toISOString();
+    try{
+      await persistCategories();
+      initCategoryUI();
+      renderEntries(lastEntries);
+    }catch(err){
+      category.deletedAt = null;
+      console.error('Failed to move category to trash', err);
+      alert('カテゴリをゴミ箱へ移動できませんでした。');
+    }
+  });
+
   headerRow.appendChild(dragHandle);
   headerRow.appendChild(header);
   headerRow.appendChild(confirmBtn);
+  headerRow.appendChild(deleteButton);
   col.appendChild(headerRow);
 
   // per-category input form (textarea + send button)
@@ -258,13 +467,13 @@ function createColumnDOM(catKey){
   return col;
 }
 
-function initCategoryUI(titles){
+function initCategoryUI(){
   timeline.innerHTML = '';
   const container = document.createElement('div');
   container.className = 'timeline-columns';
-  for(const k of CATEGORY_KEYS){
-    const col = createColumnDOM(k);
-    col.querySelector('.timeline-title').textContent = titles && titles[k] ? titles[k] : DEFAULT_TITLES[k];
+  for(const category of categories.filter(category=> !category.deletedAt)){
+    const col = createColumnDOM(category);
+    col.querySelector('.timeline-title').textContent = category.title;
     container.appendChild(col);
   }
   timeline.appendChild(container);
@@ -365,9 +574,10 @@ function initCategoryUI(titles){
   };
 
   applyInitialPositions();
-  // On resize, re-apply stored positions if present, otherwise compute defaults
-  window.addEventListener('resize', ()=>{ applyInitialPositions(); });
-  setupDrag(container);
+  if(categoryResizeHandler) window.removeEventListener('resize', categoryResizeHandler);
+  categoryResizeHandler = ()=>{ applyInitialPositions(); };
+  window.addEventListener('resize', categoryResizeHandler);
+  setupDrag(container, savePositions);
 
   // Reset positions button
   if(typeof resetPosBtn !== 'undefined' && resetPosBtn){
@@ -392,7 +602,7 @@ function initCategoryUI(titles){
 }
 
 // Drag support: attach event handlers to each column's header
-function setupDrag(container){
+function setupDrag(container, savePositions){
   const cols = Array.from(container.querySelectorAll('.timeline-column'));
   cols.forEach(col=>{
     // prefer the dedicated drag handle; fall back to title-row or column itself
@@ -409,6 +619,7 @@ function setupDrag(container){
       const isTouch = !!e.touches;
       const startX = (isTouch ? e.touches[0].clientX : e.clientX);
       const startY = (isTouch ? e.touches[0].clientY : e.clientY);
+      let moved = false;
       const containerRect = container.getBoundingClientRect();
       const rect = col.getBoundingClientRect();
       const origLeft = rect.left - containerRect.left;
@@ -417,6 +628,7 @@ function setupDrag(container){
         const mx = (ev.touches ? ev.touches[0].clientX : ev.clientX);
         const my = (ev.touches ? ev.touches[0].clientY : ev.clientY);
         const dx = mx - startX; const dy = my - startY;
+        if(Math.hypot(dx, dy) > 5) moved = true;
         let nx = origLeft + dx; let ny = origTop + dy;
         // allow overlapping beyond container bounds a bit
         // Use containerRect (bounding box) and window height as fallback — container.clientHeight can be 0 for absolutely positioned columns
@@ -432,8 +644,8 @@ function setupDrag(container){
         document.removeEventListener('mouseup', onUp);
         document.removeEventListener('touchmove', onMove);
         document.removeEventListener('touchend', onUp);
-        // Save positions after drag ends
-        try{ savePositions(); }catch(e){/* ignore */}
+        savePositions();
+        if(!moved && handle._cycleCategoryColor) handle._cycleCategoryColor();
       }
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
@@ -450,15 +662,13 @@ function bringToFront(el){
 
 function renderEntries(list){
   // list: array of entries with fields {id,text,ts,category}
+  lastEntries = list || [];
   // Clear column lists
-  for(const k of CATEGORY_KEYS){
-    const el = document.querySelector('.column-list[data-key="'+k+'"]');
-    if(el) el.innerHTML = '';
-  }
+  document.querySelectorAll('.column-list').forEach(el=>{ el.innerHTML = ''; });
   // If no entries at all, show placeholder in first column
   const totalCount = (list || []).length;
   if(!list || totalCount === 0){
-    const el = document.querySelector('.column-list[data-key="c1"]');
+    const el = document.querySelector('.column-list');
     if(el){
       const p = document.createElement('div');
       p.className = 'no-entries';
@@ -468,10 +678,10 @@ function renderEntries(list){
     return;
   }
   // For each category, collect entries and render latest 3, with toggle for the rest
-  for(const k of CATEGORY_KEYS){
-    const parent = document.querySelector('.column-list[data-key="'+k+'"]');
+  for(const category of categories.filter(category=> !category.deletedAt)){
+    const parent = document.querySelector('.column-list[data-key="'+category.id+'"]');
     if(!parent) continue;
-    const items = (list || []).filter(e => (e.category || 'c1') === k);
+    const items = (list || []).filter(e => e.category === category.id);
     if(!items || items.length === 0){
       const p = document.createElement('div');
       p.className = 'no-entries';
@@ -991,8 +1201,8 @@ async function deleteEntry(){
 
 async function render(){
   await migrateLocalStorageToIDB();
-  const titles = await getCategoryTitlesFromIDB();
-  initCategoryUI(titles);
+  categories = await getCategoriesFromIDB();
+  initCategoryUI();
   const entries = await getAllEntriesFromIDB();
   renderEntries(entries);
 }
@@ -1002,7 +1212,7 @@ let currentUser = null;
 let firestoreListenerUnsub = null;
 let firestoreCategoryUnsub = null;
 
-async function listenToCategoryTitles(uid){
+async function listenToCategories(uid){
   if(!window._fb || !window._fb.db) return Promise.resolve();
   if(firestoreCategoryUnsub) firestoreCategoryUnsub();
   const docRef = window._fb.db.collection('users').doc(uid);
@@ -1011,15 +1221,11 @@ async function listenToCategoryTitles(uid){
     firestoreCategoryUnsub = docRef.onSnapshot(doc=>{
       const data = (doc && doc.exists) ? doc.data() : null;
       if(data && data.categories){
-        // save to IDB and update UI
-        saveCategoryTitlesToIDB(data.categories).then(()=>{
-          // update UI titles without reloading entries
-          const headers = document.querySelectorAll('.timeline-title');
-          for(const k of CATEGORY_KEYS){
-            const el = document.querySelector('.timeline-title[data-key="'+k+'"]');
-            if(el) el.textContent = data.categories[k] || DEFAULT_TITLES[k];
-          }
-        }).catch(err=>console.warn('Failed to save category titles from snapshot', err));
+        categories = normalizeCategories(data.categories);
+        saveCategoriesToIDB(categories).then(()=>{
+          initCategoryUI();
+          renderEntries(lastEntries);
+        }).catch(err=>console.warn('Failed to save categories from snapshot', err));
       }
       if(first){ first = false; resolve(); }
     }, err=>{
@@ -1081,12 +1287,12 @@ async function flushOutboxToFirestore(uid){
   }
 }
 
-async function loadCategoryTitlesFromFirestore(uid){
+async function loadCategoriesFromFirestore(uid){
   if(!window._fb || !window._fb.db) return null;
   try{
     const doc = await window._fb.db.collection('users').doc(uid).get();
-    if(doc.exists && doc.data().categories) return doc.data().categories;
-  }catch(err){ console.warn('Failed to load category titles from Firestore', err); }
+    if(doc.exists && doc.data().categories) return normalizeCategories(doc.data().categories);
+  }catch(err){ console.warn('Failed to load categories from Firestore', err); }
   return null;
 }
 
@@ -1098,15 +1304,14 @@ if(window._fb && window._fb.auth){
     showUser(user);
     if(user){
       // load category titles from server (if present) and save to IDB
-      const remoteTitles = await loadCategoryTitlesFromFirestore(user.uid);
-      if(remoteTitles){
-        await saveCategoryTitlesToIDB(remoteTitles);
+      const remoteCategories = await loadCategoriesFromFirestore(user.uid);
+      if(remoteCategories){
+        await saveCategoriesToIDB(remoteCategories);
       }
       // flush local outbox to Firestore then listen to remote category titles and entries
       await flushOutboxToFirestore(user.uid);
       try{
-        // start listening to category titles first so UI headers show remote values quickly
-        await listenToCategoryTitles(user.uid);
+        await listenToCategories(user.uid);
       }catch(err){
         console.warn('Listening to category titles failed', err);
       }
@@ -1137,6 +1342,8 @@ if(window._fb && window._fb.auth){
   });
 }
 
+addCategoryBtn.addEventListener('click', addCategory);
+categoryTrashBtn.addEventListener('click', openCategoryTrash);
 
 // initial render (if not authenticated yet)
 render();
