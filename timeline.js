@@ -24,6 +24,7 @@ const DEFAULT_CATEGORIES = Object.entries(DEFAULT_TITLES).map(([id, title])=>({
 }));
 let categories = [];
 let lastEntries = [];
+let entryCounts = new Map();
 let categoryResizeHandler = null;
 const POS_KEY = 'timeline_column_positions_v1';
 
@@ -147,9 +148,10 @@ function csvCell(value){
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-function downloadEntriesCsv(){
+async function downloadEntriesCsv(){
+  const entries = await getAllEntriesFromIDB();
   const categoryById = new Map(categories.map(category=> [category.id, category]));
-  const rows = lastEntries.map(entry=>{
+  const rows = entries.map(entry=>{
     const category = categoryById.get(entry.category || 'c1');
     return [
       category && category.deletedAt ? 'ゴミ箱' : '表示中',
@@ -239,11 +241,26 @@ function openCategoryTrash(){
 // IndexedDB helpers
 function openDB(){
   return new Promise((resolve, reject)=>{
-    const req = indexedDB.open('timeline-db', 2);
+    const req = indexedDB.open('timeline-db', 3);
     req.onupgradeneeded = ()=>{
       const db = req.result;
+      let entriesStore;
       if(!db.objectStoreNames.contains('entries')){
-        db.createObjectStore('entries', { keyPath: 'id', autoIncrement: true });
+        entriesStore = db.createObjectStore('entries', { keyPath: 'id', autoIncrement: true });
+      }else{
+        entriesStore = req.transaction.objectStore('entries');
+      }
+      if(!entriesStore.indexNames.contains('category-timestamp')){
+        entriesStore.createIndex('category-timestamp', ['category', 'ts']);
+      }
+      const entryCursor = entriesStore.openCursor();
+      entryCursor.onsuccess = event=>{
+        const cursor = event.target.result;
+        if(!cursor) return;
+        if(!cursor.value.category){
+          cursor.update({ ...cursor.value, category: 'c1' });
+        }
+        cursor.continue();
       }
       if(!db.objectStoreNames.contains('outbox')){
         db.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true });
@@ -297,6 +314,90 @@ async function getAllEntriesFromIDB(){
       resolve(arr);
     };
     req.onerror = ()=> reject(req.error);
+  });
+}
+
+async function getRecentEntriesFromIDB(categoryIds){
+  const visibleCategoryIds = [...new Set(categoryIds)];
+  if(visibleCategoryIds.length === 0) return [];
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction('entries', 'readonly');
+    const index = tx.objectStore('entries').index('category-timestamp');
+    const entriesByCategory = new Map();
+    let pending = visibleCategoryIds.length;
+    const finishCategory = ()=>{
+      pending -= 1;
+      if(pending === 0){
+        resolve(visibleCategoryIds.flatMap(categoryId=> entriesByCategory.get(categoryId) || []));
+      }
+    };
+
+    visibleCategoryIds.forEach(categoryId=>{
+      const entries = [];
+      const range = IDBKeyRange.bound([categoryId, ''], [categoryId, '\uffff']);
+      const req = index.openCursor(range, 'prev');
+      req.onsuccess = event=>{
+        const cursor = event.target.result;
+        if(cursor && entries.length < 3){
+          entries.push(cursor.value);
+          cursor.continue();
+          return;
+        }
+        entriesByCategory.set(categoryId, entries);
+        finishCategory();
+      };
+      req.onerror = ()=> reject(req.error);
+    });
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function getEntryCountsFromIDB(categoryIds){
+  const visibleCategoryIds = [...new Set(categoryIds)];
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction('entries', 'readonly');
+    const index = tx.objectStore('entries').index('category-timestamp');
+    const counts = new Map();
+    let pending = visibleCategoryIds.length;
+    if(pending === 0){
+      resolve(counts);
+      return;
+    }
+    visibleCategoryIds.forEach(categoryId=>{
+      const range = IDBKeyRange.bound([categoryId, ''], [categoryId, '\uffff']);
+      const req = index.count(range);
+      req.onsuccess = ()=>{
+        counts.set(categoryId, req.result);
+        pending -= 1;
+        if(pending === 0) resolve(counts);
+      };
+      req.onerror = ()=> reject(req.error);
+    });
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+async function getEntriesForCategoryFromIDB(categoryId){
+  const db = await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction('entries', 'readonly');
+    const index = tx.objectStore('entries').index('category-timestamp');
+    const range = IDBKeyRange.bound([categoryId, ''], [categoryId, '\uffff']);
+    const entries = [];
+    const req = index.openCursor(range, 'prev');
+    req.onsuccess = event=>{
+      const cursor = event.target.result;
+      if(cursor){
+        entries.push(cursor.value);
+        cursor.continue();
+      }else{
+        resolve(entries);
+      }
+    };
+    req.onerror = ()=> reject(req.error);
+    tx.onerror = ()=> reject(tx.error);
   });
 }
 
@@ -758,62 +859,6 @@ function bringToFront(el){
   el.style.zIndex = ++zIndexCounter;
 }
 
-function renderEntries(list){
-  // list: array of entries with fields {id,text,ts,category}
-  lastEntries = list || [];
-  // Clear column lists
-  document.querySelectorAll('.column-list').forEach(el=>{ el.innerHTML = ''; });
-  // If no entries at all, show placeholder in first column
-  const totalCount = (list || []).length;
-  if(!list || totalCount === 0){
-    const el = document.querySelector('.column-list');
-    if(el){
-      const p = document.createElement('div');
-      p.className = 'no-entries';
-      p.textContent = 'まだエントリーがありません。各カテゴリの下に入力欄があります。';
-      el.appendChild(p);
-    }
-    return;
-  }
-  // For each category, collect entries and render latest 3, with toggle for the rest
-  for(const category of categories.filter(category=> !category.deletedAt)){
-    const parent = document.querySelector('.column-list[data-key="'+category.id+'"]');
-    if(!parent) continue;
-    const items = (list || []).filter(e => e.category === category.id);
-    if(!items || items.length === 0){
-      const p = document.createElement('div');
-      p.className = 'no-entries';
-      p.textContent = '';
-      parent.appendChild(p);
-      continue;
-    }
-    // show latest 3
-    const visible = items.slice(0,3);
-    const hidden = items.slice(3);
-    for(const e of visible){
-      const el = buildEntryElement(e);
-      parent.appendChild(el);
-    }
-    if(hidden.length > 0){
-      const extraContainer = document.createElement('div');
-      extraContainer.className = 'extra-entries';
-      for(const e of hidden){
-        const el = buildEntryElement(e);
-        extraContainer.appendChild(el);
-      }
-      parent.appendChild(extraContainer);
-      const btn = document.createElement('button');
-      btn.className = 'more-toggle';
-      btn.textContent = `他 ${hidden.length} 件を表示`;
-      btn.addEventListener('click', ()=>{
-        const open = extraContainer.classList.toggle('open');
-        btn.textContent = open ? '閉じる' : `他 ${hidden.length} 件を表示`;
-      });
-      parent.appendChild(btn);
-    }
-  }
-}
-
 function buildEntryElement(e){
   const el = document.createElement('article');
   el.className = 'entry';
@@ -840,6 +885,10 @@ function buildEntryElement(e){
   const body = document.createElement('div'); body.className='body';
   const text = document.createElement('div'); text.className='text';
   text.textContent = e.text || '';
+  if(/^https?:\/\/\S+$/i.test((e.text || '').trim())){
+    text.classList.add('is-url');
+    text.title = e.text;
+  }
   body.appendChild(text);
 
   el.appendChild(timeEl);
@@ -1301,14 +1350,161 @@ async function render(){
   await migrateLocalStorageToIDB();
   categories = await getCategoriesFromIDB();
   initCategoryUI();
-  const entries = await getAllEntriesFromIDB();
+  const visibleCategoryIds = categories
+    .filter(category=> !category.deletedAt)
+    .map(category=> category.id);
+  const [entries, counts] = await Promise.all([
+    getRecentEntriesFromIDB(visibleCategoryIds),
+    getEntryCountsFromIDB(visibleCategoryIds),
+  ]);
+  entryCounts = counts;
   renderEntries(entries);
+}
+
+function appendEntriesProgressively(container, entries){
+  const batchSize = 30;
+  let index = 0;
+  const appendBatch = ()=>{
+    if(!container.isConnected) return;
+    const fragment = document.createDocumentFragment();
+    const batch = entries.slice(index, index + batchSize);
+    batch.forEach(entry=> fragment.appendChild(buildEntryElement(entry)));
+    container.appendChild(fragment);
+    index += batch.length;
+    if(index < entries.length) requestAnimationFrame(appendBatch);
+  };
+  appendBatch();
+}
+
+async function openEntryListDialog(category){
+  const dialog = document.createElement('div');
+  dialog.className = 'modal entry-list-modal';
+  dialog.innerHTML = `
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="entryListTitle">
+      <h3 id="entryListTitle"></h3>
+      <div class="entry-list-status">読み込み中...</div>
+      <div class="entry-list-dialog-content"></div>
+    </div>
+  `;
+  const close = ()=>{
+    dialog.remove();
+    document.body.classList.remove('modal-open');
+  };
+  dialog.querySelector('.modal-backdrop').addEventListener('click', close);
+  dialog.querySelector('#entryListTitle').textContent = `${category.title}のエントリー`;
+  document.body.appendChild(dialog);
+  document.body.classList.add('modal-open');
+
+  try{
+    let entries;
+    if(currentUser && window._fb && window._fb.db){
+      const snapshot = await window._fb.db.collection('users').doc(currentUser.uid).collection('entries')
+        .where('category', '==', category.id)
+        .get();
+      entries = snapshot.docs
+        .map(doc=> Object.assign({ id: doc.id }, doc.data() || {}))
+        .sort((a, b)=> String(b.ts || '').localeCompare(String(a.ts || '')));
+    }else{
+      entries = await getEntriesForCategoryFromIDB(category.id);
+    }
+    const status = dialog.querySelector('.entry-list-status');
+    status.remove();
+    appendEntriesProgressively(dialog.querySelector('.entry-list-dialog-content'), entries);
+  }catch(err){
+    console.error('Failed to load category entries', err);
+    dialog.querySelector('.entry-list-status').textContent = 'エントリーを読み込めませんでした。';
+  }
+}
+
+function renderEntries(list){
+  // list: array of entries with fields {id,text,ts,category}
+  lastEntries = list || [];
+  // Clear column lists
+  document.querySelectorAll('.column-list').forEach(el=>{ el.innerHTML = ''; });
+  // If no entries at all, show placeholder in first column
+  const totalCount = (list || []).length;
+  if(!list || totalCount === 0){
+    const el = document.querySelector('.column-list');
+    if(el){
+      const p = document.createElement('div');
+      p.className = 'no-entries';
+      p.textContent = 'まだエントリーがありません。各カテゴリの下に入力欄があります。';
+      el.appendChild(p);
+    }
+    return;
+  }
+  // For each category, render its three most recent entries and a lazy full-list link.
+  for(const category of categories.filter(category=> !category.deletedAt)){
+    const parent = document.querySelector('.column-list[data-key="'+category.id+'"]');
+    if(!parent) continue;
+    const items = (list || []).filter(e => e.category === category.id);
+    if(!items || items.length === 0){
+      const p = document.createElement('div');
+      p.className = 'no-entries';
+      p.textContent = '';
+      parent.appendChild(p);
+      continue;
+    }
+    for(const entry of items.slice(0, 3)){
+      parent.appendChild(buildEntryElement(entry));
+    }
+    const total = entryCounts.get(category.id) || items.length;
+    if(total > 3){
+      const button = document.createElement('button');
+      button.className = 'more-toggle';
+      button.type = 'button';
+      button.textContent = `残り${total - 3}個を表示`;
+      button.addEventListener('click', ()=> openEntryListDialog(category));
+      parent.appendChild(button);
+    }
+  }
 }
 
 // Firebase auth + Firestore integration (text-only sync)
 let currentUser = null;
-let firestoreListenerUnsub = null;
+let firestoreEntryUnsubs = [];
+let firestoreEntryCategoryIds = [];
 let firestoreCategoryUnsub = null;
+
+async function refreshFirestoreEntryCount(categoryId){
+  try{
+    const token = await currentUser.getIdToken();
+    const response = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/(default)/documents/users/${encodeURIComponent(currentUser.uid)}:runAggregationQuery`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          structuredAggregationQuery: {
+            structuredQuery: {
+              from: [{ collectionId: 'entries' }],
+              where: {
+                fieldFilter: {
+                  field: { fieldPath: 'category' },
+                  op: 'EQUAL',
+                  value: { stringValue: categoryId },
+                },
+              },
+            },
+            aggregations: [{ count: {}, alias: 'entryCount' }],
+          },
+        }),
+      },
+    );
+    if(!response.ok) throw new Error(`Firestore entry count failed: ${response.status}`);
+    const result = await response.json();
+    const count = Number(result[0]?.result?.aggregateFields?.entryCount?.integerValue);
+    if(!Number.isFinite(count)) throw new Error('Firestore entry count response is invalid');
+    entryCounts.set(categoryId, count);
+    renderEntries(lastEntries);
+  }catch(err){
+    console.warn('Failed to count Firestore entries', err);
+  }
+}
 
 async function listenToCategories(uid){
   if(!window._fb || !window._fb.db) return Promise.resolve();
@@ -1320,9 +1516,14 @@ async function listenToCategories(uid){
       const data = (doc && doc.exists) ? doc.data() : null;
       if(data && data.categories){
         categories = normalizeCategories(data.categories);
-        saveCategoriesToIDB(categories).then(()=>{
+        saveCategoriesToIDB(categories).then(async ()=>{
           initCategoryUI();
           renderEntries(lastEntries);
+          try{
+            await listenToUserEntries(uid);
+          }catch(err){
+            console.warn('Listening to Firestore entries failed', err);
+          }
         }).catch(err=>console.warn('Failed to save categories from snapshot', err));
       }
       if(first){ first = false; resolve(); }
@@ -1348,24 +1549,68 @@ function showUser(u){
 
 async function listenToUserEntries(uid){
   if(!window._fb || !window._fb.db) return Promise.resolve();
-  if(firestoreListenerUnsub) firestoreListenerUnsub();
-  const col = window._fb.db.collection('users').doc(uid).collection('entries').orderBy('ts','desc');
-  let first = true;
-  return new Promise((resolve, reject)=>{
-    firestoreListenerUnsub = col.onSnapshot(snapshot=>{
-      const docs = snapshot.docs.map(d=>{
-        const data = d.data() || {};
-        if(!data.category) data.category = 'c1';
-        return Object.assign({ id: d.id }, data);
-      });
-      // Firestore stores plain text entries (no images in this app)
-      renderEntries(docs);
+  const visibleCategoryIds = categories
+    .filter(category=> !category.deletedAt)
+    .map(category=> category.id);
+  const listenersAreCurrent = visibleCategoryIds.length === firestoreEntryCategoryIds.length
+    && visibleCategoryIds.every((categoryId, index)=> categoryId === firestoreEntryCategoryIds[index]);
+  if(listenersAreCurrent && firestoreEntryUnsubs.length > 0) return Promise.resolve();
+
+  firestoreEntryUnsubs.forEach(unsubscribe=> unsubscribe());
+  firestoreEntryUnsubs = [];
+  firestoreEntryCategoryIds = visibleCategoryIds;
+  entryCounts = new Map();
+  if(visibleCategoryIds.length === 0){
+    renderEntries([]);
+    return Promise.resolve();
+  }
+
+  const entriesCollection = window._fb.db.collection('users').doc(uid).collection('entries');
+  const entriesByCategory = new Map();
+  return Promise.all(visibleCategoryIds.map(categoryId=> new Promise((resolve, reject)=>{
+    let first = true;
+    const renderCategoryEntries = entries=>{
+      entriesByCategory.set(categoryId, entries);
+      renderEntries(visibleCategoryIds.flatMap(id=> entriesByCategory.get(id) || []));
+    };
+    const resolveFirstSnapshot = ()=>{
       if(first){ first = false; resolve(); }
+    };
+    let unsubscribe = entriesCollection
+      .where('category', '==', categoryId)
+      .orderBy('ts', 'desc')
+      .limit(3)
+      .onSnapshot(snapshot=>{
+      const entries = snapshot.docs.map(doc=> Object.assign({ id: doc.id }, doc.data() || {}));
+      renderCategoryEntries(entries);
+      refreshFirestoreEntryCount(categoryId);
+      resolveFirstSnapshot();
     }, err=>{
-      console.error('Firestore listener error', err);
-      if(first){ first = false; reject(err); }
+      if(err.code !== 'failed-precondition'){
+        console.error('Firestore entry listener error', err);
+        if(first){ first = false; reject(err); }
+        return;
+      }
+      console.warn('Firestore entry index is unavailable; using compatibility query', err);
+      unsubscribe();
+      const fallbackUnsubscribe = entriesCollection.where('category', '==', categoryId).onSnapshot(snapshot=>{
+        const entries = snapshot.docs
+          .map(doc=> Object.assign({ id: doc.id }, doc.data() || {}))
+          .sort((a, b)=> String(b.ts || '').localeCompare(String(a.ts || '')))
+          .slice(0, 3);
+        renderCategoryEntries(entries);
+        refreshFirestoreEntryCount(categoryId);
+        resolveFirstSnapshot();
+      }, fallbackErr=>{
+        console.error('Firestore compatibility entry listener error', fallbackErr);
+        if(first){ first = false; reject(fallbackErr); }
+      });
+      const unsubscribeIndex = firestoreEntryUnsubs.indexOf(unsubscribe);
+      if(unsubscribeIndex !== -1) firestoreEntryUnsubs[unsubscribeIndex] = fallbackUnsubscribe;
+      unsubscribe = fallbackUnsubscribe;
     });
-  });
+    firestoreEntryUnsubs.push(unsubscribe);
+  })));
 }
 
 async function flushOutboxToFirestore(uid){
@@ -1421,7 +1666,9 @@ if(window._fb && window._fb.auth){
       }
     }else{
       // stop listening and render local IDB
-      if(firestoreListenerUnsub) firestoreListenerUnsub();
+      firestoreEntryUnsubs.forEach(unsubscribe=> unsubscribe());
+      firestoreEntryUnsubs = [];
+      firestoreEntryCategoryIds = [];
       if(firestoreCategoryUnsub) firestoreCategoryUnsub();
       render();
     }
@@ -1452,7 +1699,10 @@ document.addEventListener('keydown', event=>{
   if(event.key === 'Escape') closeMenu();
 });
 resetPosBtn.addEventListener('click', resetPositions);
-downloadBtn.addEventListener('click', downloadEntriesCsv);
+downloadBtn.addEventListener('click', ()=>{ downloadEntriesCsv().catch(err=>{
+  console.error('Failed to download entries', err);
+  alert('ダウンロードに失敗しました。');
+}); });
 addCategoryBtn.addEventListener('click', addCategory);
 categoryTrashBtn.addEventListener('click', openCategoryTrash);
 [
